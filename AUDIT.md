@@ -182,12 +182,16 @@ Left alone deliberately: fixing these means guessing at third-party response
 shapes, or changing trading behaviour, neither of which should happen without
 the funded acceptance testing the checklist already requires.
 
-1. **Garp strict mode is probably unusable.** `garp.enrich()` compares
-   `r.get('chainId')` against the GeckoTerminal network slug (`'solana'` /
-   `'robinhood'`). If Garp returns a numeric or differently-spelled chain id,
-   every token mismatches. With the default `GARP_REQUIRE_LAUNCHPAD=false` this
-   only yields `'unverified'`, but with it set to `true` the bot would likely
-   reject every candidate. Verify the real response shape before enabling.
+1. ~~**Garp strict mode is probably unusable.**~~ **RESOLVED — the concern was
+   wrong.** The audit flagged that `garp.enrich()` compares `r.get('chainId')`
+   against the GeckoTerminal network slug (`'solana'` / `'robinhood'`) and
+   might therefore reject every token. Production paper-mode logs disprove it:
+   `GARP_SOURCE` events report real launchpad values (`pons-v2` on Robinhood,
+   `pumpfun` on Solana), so the slug comparison matches the live API. The
+   `'unknown'` values that also appear mean the token matched but carried no
+   `launchpad` field; `'unverified'` means the lookup failed or mismatched.
+   `GARP_REQUIRE_LAUNCHPAD=true` would still reject `'unknown'` tokens, which
+   is the documented intent, not a bug.
 2. **Third-party safety oracle.** `token_safety` for Robinhood trusts
    `api.swarm0x.sh`. It fails closed, but it is an unvetted single point of
    trust on the entry path — as the README already warns.
@@ -261,3 +265,45 @@ written as a failing test first.
   output on-chain (both chains): funded acceptance testing only.
 - Garp `chainId` comparison, the `api.swarm0x.sh` oracle, and the partial
   legacy-DB migration: unchanged from pass two, still flagged.
+
+---
+
+## Production observations (paper mode, server deployment)
+
+First sustained paper run on real infrastructure, after the Phase-3 fixes.
+
+### O-1 (HIGH, operational) — the free GeckoTerminal tier cannot sustain this bot
+
+Nearly every `ENTRY_ERROR` in production is `HTTPStatusError` (HTTP 429).
+The arithmetic: each entry evaluation costs ~3 GeckoTerminal requests (buy
+quote, sell quote, then the fill's own quote), and `Engine._entry_loop`
+attempts one candidate per 0.5s tick, so a full pending queue drives ~6
+requests/second against a free tier allowing roughly 0.5/second — about 12x
+over budget. `PAGE_COUNT=1` fixed *discovery* volume but not per-candidate
+lookups, which dominate.
+
+Consequences seen live: most entries abort, and exits needed repeated
+retries (`SELL_RETRY`, `SELL_QUOTE_RETRY`; one position took 6 sell attempts
+over 2 minutes to get a usable quote). A bot that cannot reliably fetch an
+exit quote cannot reliably exit a position, so **a paid data plan is a
+prerequisite for live trading, not an optimization.** Config-only
+mitigations (higher `MIN_LIQUIDITY_USD`, narrower age window, longer
+`POLL_SECONDS`) reduce candidate volume but do not change the per-candidate
+cost.
+
+### O-2 — the Phase-3 paper-error fix behaves as intended
+
+Five `BUY_FAILED  "Paper fill unavailable: HTTPStatusError"` events, each
+recorded as `FAILED_BUY` with trading left running. Before the fix the first
+one would have latched `RECOVERY_BUY` + `paused` and demanded manual onchain
+reconciliation of a trade that never existed.
+
+### O-3 — profit floor and underwater hold confirmed on real price data
+
+Two completed round trips, both clearing the configured floor
+(5,175,000 atomic): +$0.457 and +$0.895 gross, the second after 4 underwater
+checks and 6 sell attempts. **This is not evidence of profitability.** Per
+H-1, a live Solana round trip costs roughly $0.33-0.64 including
+unrecoverable ATA rent, which would consume most or all of that gross edge
+at $5 position size. Sample is also biased: only trades that happened to
+slip between rate limits completed at all.
