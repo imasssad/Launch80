@@ -422,3 +422,70 @@ async def test_exit_loop_tick_is_unaffected_by_entry_interval(cfg, store):
     finally:
         asyncio.wait_for = real_wait_for
     assert waits == [0.5]
+
+
+# --- F10: a 429 without Retry-After must not be hammered --------------------
+
+async def test_429_without_retry_after_fails_fast(monkeypatch):
+    """One logical request must not become three while quota is exhausted."""
+    import httpx
+    from launch80.http import Api
+
+    attempts = {'n': 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts['n'] += 1
+        return httpx.Response(429)
+
+    api = Api()
+    api.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            await api.get('https://api.geckoterminal.com/x', retries=2)
+    finally:
+        await api.close()
+    assert attempts['n'] == 1, f'expected a single attempt, made {attempts["n"]}'
+
+
+async def test_429_with_retry_after_is_honoured(monkeypatch):
+    """A server-supplied delay is trustworthy, so retrying is still correct."""
+    import httpx
+    from launch80.http import Api
+
+    attempts = {'n': 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts['n'] += 1
+        if attempts['n'] == 1:
+            return httpx.Response(429, headers={'Retry-After': '1'})
+        return httpx.Response(200, json={'ok': True})
+
+    api = Api()
+    api.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        assert await api.get('https://api.geckoterminal.com/x', retries=2) == {'ok': True}
+    finally:
+        await api.close()
+    assert attempts['n'] == 2
+
+
+async def test_5xx_still_retries_with_backoff(monkeypatch):
+    """The fail-fast rule is 429-specific; transient 5xx must still retry."""
+    import httpx
+    from launch80.http import Api
+
+    attempts = {'n': 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts['n'] += 1
+        if attempts['n'] < 3:
+            return httpx.Response(503)
+        return httpx.Response(200, json={'ok': True})
+
+    api = Api()
+    api.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        assert await api.get('https://api.geckoterminal.com/x', retries=2) == {'ok': True}
+    finally:
+        await api.close()
+    assert attempts['n'] == 3

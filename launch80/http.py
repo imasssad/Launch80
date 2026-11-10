@@ -43,8 +43,18 @@ class Api:
             try:
                 response = await self.client.get(url, params=params, headers=headers)
                 if response.status_code in (429, 500, 502, 503, 504) and n < retries:
-                    delay = _retry_after_seconds(response.headers.get('Retry-After')) or (0.8 * (2 ** n))
-                    await asyncio.sleep(delay + random.random() / 5)
+                    delay = _retry_after_seconds(response.headers.get('Retry-After'))
+                    if response.status_code == 429 and not delay:
+                        # Rate limited with no server-supplied delay. The
+                        # sub-second backoff below would turn one logical
+                        # request into three within ~2.4s, all near-certain to
+                        # fail, burning the very quota that is exhausted. Fail
+                        # fast instead: every caller already retries on a much
+                        # slower cadence (the engine re-quotes an exit after
+                        # PROFIT_RECHECK_SECONDS, entries retry next poll),
+                        # which is the right place to wait out a quota window.
+                        response.raise_for_status()
+                    await asyncio.sleep((delay or 0.8 * (2 ** n)) + random.random() / 5)
                     continue
                 response.raise_for_status()
                 return response.json()
