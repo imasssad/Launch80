@@ -150,7 +150,6 @@ async def test_exit_floor_integer_rounding_and_limits(cfg,store):
 
 async def test_robinhood_firm_rejects_loss_before_sending(cfg,pool):
     from launch80.models import Pool
-    from decimal import Decimal
     e=RobinhoodExchange.__new__(RobinhoodExchange)
     e.lock=asyncio.Lock()
     e.cfg=cfg
@@ -169,14 +168,15 @@ async def test_robinhood_firm_rejects_loss_before_sending(cfg,pool):
         await e.trade(mockpool,'sell',100_000,min_output_units=5_075_000)
 
 
-async def test_solana_quote_guard_refuses_unbounded_v1_sell(cfg,pool):
+async def test_solana_quote_guard_refuses_unbounded_sell(cfg,pool):
     e=SolanaExchange.__new__(SolanaExchange)
     e.cfg=cfg
     e.wallet='fake-wallet'
-    async def low_quote(*args):
-        return {'inputMint':pool.mint,'outputMint':cfg.solana_usdc,
-                'inAmount':'500000','otherAmountThreshold':'100'}
-    e._v1_sell_quote=low_quote
+    async def low_order(p,side,amount,execute):
+        return {'requestId':'r','transaction':'t','inputMint':pool.mint,
+                'outputMint':cfg.solana_usdc,'inAmount':'500000',
+                'otherAmountThreshold':'100'}
+    e._order=low_order
     async def no_balance():
         raise AssertionError('Should reject before token balance lookup')
     e._stable_balance=no_balance

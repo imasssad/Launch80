@@ -27,8 +27,12 @@ new purchases additionally require `LIVE_BUY_ACK=I_ENABLE_REAL_PURCHASES` and th
       enabling `GARP_REQUIRE_LAUNCHPAD`. Token-pair echo on 0x/Jupiter execution quotes is now
       rejected when mismatched, but only when the venue sends the fields: verify the live
       response schemas actually include them before relying on that check.
-- [ ] Revalidate Jupiter's legacy Metis V1 sell path, min-output instruction and request format;
-      upgrade to maintained V2 `/build` if appropriate before meaningful funds are used.
+- [ ] Validate the Jupiter Swap V2 `/order` + `/execute` integration with funded microtrades:
+      confirm `otherAmountThreshold` is enforced by the signed swap instruction at program level,
+      that `/execute` statuses map to real on-chain outcomes, and the request/response field names
+      against the live API. The deprecated V1 Metis path has been removed.
+- [ ] Measure the real roundtrip cost on each chain (tx fees, priority fees, ATA rent, failed-tx
+      fees) and set `EXIT_GAS_RESERVE_USD` from measurements; the 0.10 default is an estimate.
 - [ ] Confirm that buy/sell balances, quote token units, taxes and gas are accurately reconciled.
 - [ ] Confirm the chosen target profit exceeds **actual** buy + sell gas, priority fees and other
       overhead; 1.5% stablecoin proceeds margin alone is NOT a net-profit guarantee.
@@ -67,4 +71,8 @@ that the claimed protected minimum really is enforced by the signed onchain tran
 
 `launch80 pause` disables *new buys* and retains monitoring of held positions. For uncertain
 transactions, never manually mark reconciliation complete without independent explorer and
-balance verification. Do not delete/replace the database until all wallet movements reconcile.
+balance verification; in live mode, txid-bearing reconciliations are additionally confirmed
+against the chain RPC and refused when unverifiable. Do not delete/replace the database until
+all wallet movements reconcile. `launch80 abandon` writes off a stuck position as a full
+realized loss (freeing the position/exposure caps and counting against the daily loss cap)
+without ever selling — a human decision, never automated.

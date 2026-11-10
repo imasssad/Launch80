@@ -1,6 +1,5 @@
 """Discover *actual pools* (not mints or pre-graduation bonding curves)."""
 from __future__ import annotations
-import asyncio
 import re
 import time
 from datetime import datetime

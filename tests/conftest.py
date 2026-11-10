@@ -1,4 +1,3 @@
-from dataclasses import replace
 from decimal import Decimal
 import time
 import pytest
@@ -14,6 +13,9 @@ def cfg(monkeypatch,tmp_path):
     monkeypatch.setenv('MIN_POOL_AGE_SECONDS','10')
     monkeypatch.setenv('MAX_POOL_AGE_SECONDS','150')
     monkeypatch.setenv('BUY_USD','5')
+    # Legacy tests exercise the pure bps floor; the flat gas reserve has its
+    # own dedicated tests (test_phase3.py) and a nonzero production default.
+    monkeypatch.setenv('EXIT_GAS_RESERVE_USD','0')
     return Settings.load()
 
 @pytest.fixture

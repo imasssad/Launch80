@@ -70,6 +70,7 @@ class Settings:
     max_exit_attempts: int
     min_exit_profit_bps: int
     exit_cost_buffer_bps: int
+    exit_gas_reserve_usd: Decimal
     profit_recheck_seconds: int
     underwater_alert_seconds: int
     underwater_pause_bps: int
@@ -121,12 +122,40 @@ class Settings:
             max_exit_attempts=int(os.getenv('MAX_EXIT_ATTEMPTS','8')),
             min_exit_profit_bps=int(os.getenv('MIN_EXIT_PROFIT_BPS','100')),
             exit_cost_buffer_bps=int(os.getenv('EXIT_COST_BUFFER_BPS','50')),
+            # Flat USD added to the exit floor because network costs do not
+            # scale with trade size: Solana pays ~5000 lamports/signature plus
+            # priority fees (capped at 250k lamports here) per leg, and the new
+            # token's ATA rent (~0.00204 SOL) is never recovered; the EVM path
+            # permits up to MAX_EVM_GAS_NATIVE per transaction. A $5 trade can
+            # clear the bps floor and still lose money without this reserve.
+            # It is an operator-measured estimate, NOT an oracle.
+            exit_gas_reserve_usd=_d('EXIT_GAS_RESERVE_USD','0.10'),
             profit_recheck_seconds=int(os.getenv('PROFIT_RECHECK_SECONDS','12')),
             underwater_alert_seconds=int(os.getenv('UNDERWATER_ALERT_SECONDS','900')),
             underwater_pause_bps=int(os.getenv('UNDERWATER_PAUSE_BPS','3500')),
         )
         result.validate()
         return result
+
+    def scrub(self, text) -> str:
+        """Strip configured secrets from text before it is logged or persisted.
+
+        Transport errors (httpx, web3) embed the full request URL, and RPC
+        URLs routinely carry the API key in the path. Events and last_error
+        land in SQLite and on stdout, so every secret-bearing fragment is
+        replaced; the host is kept for diagnostics.
+        """
+        out = str(text)
+        for secret in (self.zero_x_key, self.jupiter_key, self.control_token,
+                       self.evm_private_key, self.solana_private_key):
+            if secret:
+                out = out.replace(secret, '[REDACTED]')
+        from urllib.parse import urlparse
+        for url in (self.robinhood_rpc, self.solana_rpc):
+            if url and url in out:
+                p = urlparse(url)
+                out = out.replace(url, f'{p.scheme}://{p.hostname}/[REDACTED]')
+        return out
 
     def validate(self):
         if self.min_liquidity_usd < 5000:
@@ -172,6 +201,8 @@ class Settings:
             raise ValueError('MIN_EXIT_PROFIT_BPS must be 0..10000')
         if not 0 <= self.exit_cost_buffer_bps <= 5000:
             raise ValueError('EXIT_COST_BUFFER_BPS must be 0..5000')
+        if not 0 <= self.exit_gas_reserve_usd <= 100:
+            raise ValueError('EXIT_GAS_RESERVE_USD must be 0..100')
         if not 3 <= self.profit_recheck_seconds <= 3600:
             raise ValueError('PROFIT_RECHECK_SECONDS must be 3..3600')
         if not 30 <= self.underwater_alert_seconds <= 604800:

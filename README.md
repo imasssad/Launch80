@@ -12,16 +12,16 @@
 - If the asset stays underwater, its recorded position/exposure and timer survive restarts. After `UNDERWATER_ALERT_SECONDS=900` seconds, it emits a long-hold alert. At or above a `UNDERWATER_PAUSE_BPS=3500` (35%) conservative quote loss, it pauses **new buys**, not the sell-monitoring loop.
 - Unknown transaction outcomes trigger `RECOVERY_BUY` / `RECOVERY_SELL` and require independent on-chain reconciliation. A trading-mode lock forbids reusing paper position data in live mode.
 
-**Default floor:** The received USDG/USDC minimum must be at least **101.5% of principal** (`MIN_EXIT_PROFIT_BPS=100` + `EXIT_COST_BUFFER_BPS=50`). For a 5.000000 stablecoin-unit buy, the minimum is **5.075000 units**. The 0.5% cost buffer is configurable, NOT a reliable gas-fee estimate. Real net profit may be negative after ETH/SOL gas, priority fees, stablecoin depegs, and operational costs. Holdings can go to zero and never recover. There is no forced stop-loss under this policy.
+**Default floor:** The received USDG/USDC minimum must reach **101.5% of principal plus a flat `EXIT_GAS_RESERVE_USD=0.10`** (`MIN_EXIT_PROFIT_BPS=100` + `EXIT_COST_BUFFER_BPS=50` + gas reserve). For a 5.000000 stablecoin-unit buy, the minimum is **5.175000 units**. The flat reserve exists because network costs do not scale with trade size — on Solana each leg pays base + priority fees and the new token's ATA rent (~0.00204 SOL) is never recovered; on the EVM side the per-transaction gas ceiling is `0.0007 ETH`. The reserve is an operator-set estimate, NOT an oracle: measure your actual roundtrip costs and set it yourself. Real net profit can still be negative after gas spikes, failed-transaction fees, stablecoin depegs, and operational costs. Holdings can go to zero and never recover. There is no forced stop-loss under this policy.
 
 ## Networks and integrations
 
 | Network | Discovery | Entry swap | Profit-gated exit |
 |---|---|---|---|
 | Robinhood Chain (4663) | GeckoTerminal `/new_pools`; optional Garp metadata | 0x Swap AllowanceHolder v2 USDG/token | 0x price + **firm `minBuyAmount`** checked against floor |
-| Solana | GeckoTerminal `/new_pools`; optional Garp metadata | Jupiter Swap V2 USDC/token | Jupiter **Swap V1 Metis `otherAmountThreshold`** + bounded on-chain swap, because V2 Meta-Aggregator `/order` doesn't publish a directly verifiable min-output field |
+| Solana | GeckoTerminal `/new_pools`; optional Garp metadata | Jupiter Swap V2 USDC/token | Jupiter **Swap V2 `/order` `otherAmountThreshold`** checked against the floor before signing, then `/execute` |
 
-The Jupiter V1 implementation is a **compatibility path**, and is no longer actively maintained by Jupiter. A qualified engineer should validate the transaction's actual program-level min-output guard in staging or replace it with a fully validated Jupiter V2 `/build` integration before meaningful mainnet funds are exposed. This is not a cross-chain transfer bot.
+Both Solana legs now use Jupiter **Swap V2** (`/order` + `/execute`); the previously used V1 Metis path is no longer actively maintained by Jupiter and has been removed. V2's `/order` returns `otherAmountThreshold` — the slippage-enforced minimum output — and no sell is signed unless it clears the profit floor; proceeds are then measured from the real stablecoin balance delta. A qualified engineer must still validate the transaction's actual program-level min-output guard with funded microtrades before meaningful mainnet funds are exposed (**NEEDS LIVE VALIDATION**). This is not a cross-chain transfer bot.
 
 The scanner detects actual GeckoTerminal liquidity pools with **reported liquidity >=$5,000**, not every new bonding-curve mint. Pool TVL can be inaccurate, stale, pulled, or entirely outside the currently tradable price range. Initial latency is limited by `POLL_SECONDS=30` and public feed coverage; this is not a mempool sniper.
 
@@ -67,6 +67,7 @@ The `.env.example` contains all settings; new orders remain disabled unless `BUY
 | `HOLD_SECONDS` | 80 | Minimum delay until first profit evaluation, *not a sell deadline* |
 | `MIN_EXIT_PROFIT_BPS` | 100 | Minimum desired stablecoin profit (1%) |
 | `EXIT_COST_BUFFER_BPS` | 50 | Additional stablecoin proceeds buffer (0.5%) |
+| `EXIT_GAS_RESERVE_USD` | 0.10 | Flat USD added to the floor for size-independent network costs; operator-measured, not an oracle |
 | `PROFIT_RECHECK_SECONDS` | 12 | Re-quote cadence when no profitable exit |
 | `UNDERWATER_ALERT_SECONDS` | 900 | Long-hold monitoring event after 15 min |
 | `UNDERWATER_PAUSE_BPS` | 3500 | Pause new buys after >=35% conservative quoted drawdown |
@@ -129,17 +130,20 @@ launch80 reconcile 'solana:<pool-address>' buy-filled \
 launch80 reconcile 'solana:<pool-address>' sell-not-filled --verify-onchain
 launch80 reconcile 'solana:<pool-address>' sell-filled \
   --txid '<verified-tx>' --received-atomic 5075000 --verify-onchain
+launch80 abandon 'solana:<pool-address>' --confirm-total-loss --verify-onchain
 launch80 resume
 ```
 
-`--verify-onchain` is a *human attestation flag*, not a cryptographic verifier. Do not use it without independently checking transactions and balances. The current SQLite recovery workflow is not a substitute for a professional reconciliation service.
+In **live mode**, `buy-filled` and `sell-filled` additionally confirm the supplied txid against the chain RPC (the transaction must exist and must not have failed) and refuse the reconciliation otherwise. That check proves the transaction landed, **not** the amounts: `--verify-onchain` remains a *human attestation* that the `--spent-atomic`/`--received-atomic` values were read from an explorer. For `*-not-filled` actions it is attestation only.
+
+`launch80 abandon` is the operator's write-off for a rugged/untradeable position: it never sells, it marks the position `ABANDONED`, frees the position/exposure caps, and counts the **entire principal as a realized loss** against `MAX_DAILY_REALIZED_LOSS_USD`. Use it only after independently verifying the tokens are untradeable or after disposing of them with an external wallet (then prefer `sell-filled` with the real proceeds). The current SQLite recovery workflow is not a substitute for a professional reconciliation service.
 
 ### Explicit unresolved risks
 
 - **No guarantee against loss**: rug pulls, token transfer taxes/blacklists, dead liquidity, price crashes, relayers, reorgs, RPC and indexing failure, or a stablecoin losing its peg can strand positions permanently. A "wait until profitable" rule may never sell a token.
 - **Profit metric is stablecoin-denominated before native gas fees.** An exit above the stablecoin principal can still lose real money. There is no marked-to-market loss cap and no forced liquidation.
 - **0x** uses a verified allowed transaction target and exact allowances, but only on-chain receipts and a security review can establish correct output, calldata, nonce/fee handling and approvals for a particular live token.
-- **Jupiter V1 sell path** was chosen for its explicit output threshold and is not actively maintained; its program-level slippage assertion needs live acceptance verification before nontrivial deployment.
+- **Jupiter V2 sell path** relies on `/order`'s `otherAmountThreshold` being enforced by the signed swap instruction; that program-level assertion needs live acceptance verification before nontrivial deployment.
 - **New liquidity pool detection** is poll-based and the $5K liquidity figure does not guarantee usable exit liquidity. Garp and external token-risk scans are informative only and may be delayed or unavailable.
 - **Unverified third-party response shapes.** `GARP_REQUIRE_LAUNCHPAD=true` compares Garp's `chainId` against the GeckoTerminal network slug and may therefore reject every candidate; confirm the real response before enabling it. Execution quotes now reject a mismatched token-pair echo on both chains, but only when the venue sends those fields — verify the live schemas include them. See `AUDIT.md`.
 - Fees and priority costs on **failed swaps** are borne even if the protected transaction reverts. Gas is deliberately excluded from realized PnL. Hot-wallet custody and infrastructure failures are outside this bot's protection.
@@ -149,7 +153,8 @@ launch80 resume
 Read `LIVE_READINESS_CHECKLIST.md` and complete every blocking gate before funded unattended execution. The bot is not live-certified. `AUDIT.md` records the static import audit: what was fixed, what was reviewed and found sound, and seven known issues deliberately left for the funded acceptance gates.
 
 
-- `AUDIT.md`: static import audit — fixed defects, verified invariants, open issues
+- `AUDIT.md`: audit log (three passes) — fixed defects, verified invariants, open issues
+- `REPORT.md`: audit summary — severities, deferred items, and what blocks real funds
 - `launch80/engine.py`: profit gate, independent exit and discovery loops, buy risk limits
 - `launch80/exchange.py`: paper, 0x Robinhood and Jupiter Solana adapters with execution floor checks
 - `launch80/storage.py`: SQLite state journal, mode lock, underwater and restart tracking

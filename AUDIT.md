@@ -204,3 +204,60 @@ the funded acceptance testing the checklist already requires.
 6. **Paper model uses a fixed 100 bps protected-output haircut** rather than
    the configured `SLIPPAGE_BPS`; it is an explicitly rough simulation, not a
    fill model.
+
+---
+
+## Third pass — full security audit (structured, with severities)
+
+Method: re-read of every module highest-risk first (exchange → engine →
+storage → config/preflight/server/main), verification of the 0x and Jupiter
+integrations against their current public docs, gas-cost estimation, race and
+restart analysis, `pip-audit`, `ruff`, `mypy`, and a paper-mode service run.
+Baseline before this pass: 74 tests; after: 98. Every behavioural fix was
+written as a failing test first.
+
+### Findings fixed in this pass
+
+| ID | Severity | Where | Finding |
+|----|----------|-------|---------|
+| H-1 | HIGH | `engine.min_exit_proceeds` | Floor excluded gas. Solana roundtrip fees (base + priority, ≤250k lamports/leg) plus never-recovered ATA rent (~0.00204 SOL) can exceed the $0.075 floor profit on a $5 trade; the EVM path permits up to 0.0007 ETH per tx. A floor-passing exit could lose money. Fixed: flat `EXIT_GAS_RESERVE_USD` (default 0.10) added to the floor; operator-measured, bounded 0..100. |
+| H-2 | HIGH | `exchange.SolanaExchange` | Sell path depended on Jupiter V1 Metis, which Jupiter no longer maintains (lite-api already sunset; v6 retired). Current V2 `/order` *does* return `otherAmountThreshold` (confirmed against Jupiter's API reference and a CoW Protocol integration), so the stated reason for staying on V1 no longer holds. Fixed: both legs now use V2 `/order`+`/execute`; sells are signed only when the enforced threshold clears the floor; proceeds measured from real balance delta. NEEDS LIVE VALIDATION. |
+| M-1 | MEDIUM | `main.py` reconcile | `--verify-onchain` was pure attestation even in live mode where RPC credentials exist. Fixed: live `buy-filled`/`sell-filled` now require the txid to exist on-chain and not have failed (`launch80/verify.py`), refusing when unverifiable. Amount fields remain operator attestation. NEEDS LIVE VALIDATION. |
+| M-2 | MEDIUM | caps / stuck positions | A rug or honeypot holds forever by design, so 2 stuck positions permanently exhaust `MAX_OPEN_POSITIONS` and their principal pins `MAX_TOTAL_EXPOSURE_USD` — the bot ends up alive but unable to trade, with no invariant-preserving release. Fixed: `launch80 abandon <key> --confirm-total-loss --verify-onchain` — operator-only write-off to a terminal `ABANDONED` state that frees capacity and counts the full principal as realized loss (so the daily loss cap sees it). The engine never calls it: no automated loss-selling. |
+| M-3 | MEDIUM | `engine.py`, `preflight.py` | Raw transport-error text was persisted to SQLite events/`last_error` and printed by `launch80 check`; httpx/web3 errors embed the full request URL, and RPC URLs routinely carry the API key in the path. Fixed: `Settings.scrub()` strips all configured keys/tokens and reduces RPC URLs to scheme+host at every persistence point. |
+| L-1 | LOW | `Dockerfile` | No container healthcheck; compose `restart: unless-stopped` could keep a wedged process "up". Fixed: HEALTHCHECK against `/health`. |
+| L-2 | LOW | repo-wide | 11 unused/redefined imports (ruff F401/F811) removed; `PaperExchange.trade` compared an Optional without a None guard (mypy) — guarded. Ruff configured to bug-level rules (E4,E9,F): the one-line `if x: y` style and broad fail-closed `except Exception` blocks are the author's deliberate idiom, left alone. |
+
+### Checked and found sound in this pass
+
+- **pip-audit:** no known vulnerabilities in the dependency set.
+- **0x integration vs current docs:** AllowanceHolder v2 endpoints, required
+  `taker`, `minBuyAmount`, approve-only-`issues.allowance.spender`/
+  `allowanceTarget`, never-approve-Settler — all match. A null `minBuyAmount`
+  (shown in the docs' own example) fail-closes: the engine holds and the firm
+  path rejects. Robinhood chain id 4663 and 0x support for it: NEEDS LIVE
+  VALIDATION.
+- **Races:** concurrent exits on one key cannot double-sell
+  (`mark_selling` is a status-guarded compare-and-swap; regression test
+  added); entries are serialized by `_trade_lock` with a re-check before the
+  claim; restart mid-buy/mid-sell quarantines to `RECOVERY_*` and pauses
+  (existing tests).
+- **Solana token_safety:** rejects Token-2022 and any mint with an active
+  mint/freeze authority, uninitialized or non-mint accounts — now covered by
+  unit tests. It cannot detect LP pulls, holder concentration or router
+  blacklists; the $5K liquidity figure is reported by GeckoTerminal and can be
+  wash-faked, mitigated only partially by `MAX_LIQUIDITY_FRACTION`, the
+  roundtrip quote gate and (EVM) the simulation oracle.
+- **Secrets at rest:** `.env` git-ignored, compose injects via `env_file`,
+  keys never constructed into URLs by this code, monitor bound to
+  `127.0.0.1`, control endpoints constant-time token, read endpoints
+  local-only by deployment.
+
+### Deferred (documented, not guessed at)
+
+- mypy: 22 remaining errors — TypedDict friction with web3 and dict-shape
+  reports in `preflight.py`; no behavioural defect found behind them.
+- Program-level verification that the signed transactions enforce the minimum
+  output on-chain (both chains): funded acceptance testing only.
+- Garp `chainId` comparison, the `api.swarm0x.sh` oracle, and the partial
+  legacy-DB migration: unchanged from pass two, still flagged.

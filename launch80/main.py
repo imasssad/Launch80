@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import signal
-import sys
 from .config import Settings
 from .discovery import GeckoPools
 from .engine import Engine
@@ -24,6 +23,12 @@ def parser():
     sub=p.add_subparsers(dest='cmd',required=True)
     sub.add_parser('run'); sub.add_parser('check'); sub.add_parser('stats'); sub.add_parser('pause'); sub.add_parser('resume')
     sub.add_parser('positions'); sub.add_parser('events')
+    a=sub.add_parser('abandon',help='Write off an OPEN/MANUAL_EXIT position as a total realized loss; frees capacity, never sells')
+    a.add_argument('key')
+    a.add_argument('--confirm-total-loss',action='store_true',required=True,
+                   help='Operator accepts the full principal as realized loss')
+    a.add_argument('--verify-onchain',action='store_true',required=True,
+                   help='Operator independently verified the tokens are untradeable or externally disposed')
     r=sub.add_parser('reconcile',help='Manual, after independent on-chain verification')
     r.add_argument('key'); r.add_argument('action',choices=['buy-filled','buy-not-filled','sell-filled','sell-not-filled'])
     r.add_argument('--txid',default='')
@@ -90,12 +95,28 @@ def main():
         elif args.cmd=='resume':
             if store.has_unknowns(): raise SystemExit('Unreconciled trade exists; resolve it first.')
             store.set_flag('paused','0');store.log('OPERATOR_RESUME');print('New buys resumed.')
+        elif args.cmd=='abandon':
+            # Human decision only. Keeps the profit-only invariant: the bot
+            # never sells at a loss; the operator declares the loss instead.
+            if not store.get(args.key): raise SystemExit('Unknown position key')
+            if not store.abandon(args.key,'Operator wrote off position after independent verification'):
+                raise SystemExit('Only OPEN or MANUAL_EXIT positions can be abandoned')
+            store.log('OPERATOR_ABANDON',args.key,'Principal counted as realized loss; capacity freed')
+            print('Position abandoned. Principal now counts toward the daily realized loss cap.')
         elif args.cmd=='reconcile':
             # Human operator must independently verify actual transactions & balances.
             if not args.verify_onchain:
                 raise SystemExit('Verification flag required')
             row=store.get(args.key)
             if not row: raise SystemExit('Unknown position key')
+            if cfg.live and args.action in ('buy-filled','sell-filled'):
+                # --verify-onchain alone is a human attestation; in live mode
+                # the txid is additionally confirmed against the chain and the
+                # reconciliation is refused when it cannot be (fail closed).
+                from .verify import confirmed_onchain
+                if not asyncio.run(confirmed_onchain(cfg,row['chain'],args.txid)):
+                    raise SystemExit('Transaction not independently confirmed on-chain '
+                                     '(unknown, failed, or RPC unreachable); refusing reconciliation')
             ok=False
             if args.action=='buy-filled':
                 if row['status']=='RECOVERY_BUY' and args.txid and args.spent_atomic>0 and args.received_atomic>0 and 0<args.buy_confirmed_at<=__import__('time').time():

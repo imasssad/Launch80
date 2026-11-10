@@ -1,7 +1,6 @@
 """Read-only connectivity/balance checks. No trades, approvals, or signing."""
 from __future__ import annotations
 import asyncio
-import json
 from .config import Settings
 from .exchange import RobinhoodExchange,SolanaExchange
 from .discovery import GeckoPools
@@ -55,7 +54,7 @@ async def check(cfg: Settings):
                     sell=await ex.quote(sample,'sell',100_000_000)
                     row['jupiter_v1_sell_minimum_quote_ok']=bool(sell.min_out_units and sell.min_out_units>0)
             except Exception as e:
-                row['live_preflight_error']=type(e).__name__+': '+str(e)[:200]
+                row['live_preflight_error']=type(e).__name__+': '+cfg.scrub(e)[:200]
         outcome['ok']=all(r.get('gecko_feed_ok') and 'live_preflight_error' not in r
               and (not cfg.live or (
                   r.get('zero_x_sell_minimum_quote_ok') if r['network']=='robinhood'

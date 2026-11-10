@@ -82,14 +82,14 @@ class Engine:
                 try:
                     fill=await backend.trade(pool,'buy',amount)
                 except UncertainExecution as exc:
-                    self.store.set_error(pool.key,'RECOVERY_BUY',str(exc))
+                    self.store.set_error(pool.key,'RECOVERY_BUY',self.cfg.scrub(exc))
                     self.store.set_flag('paused','1')
-                    self.store.log('BUY_UNCERTAIN',pool.key,str(exc))
+                    self.store.log('BUY_UNCERTAIN',pool.key,self.cfg.scrub(exc))
                     LOG.error('Buy uncertain for %s; new entries paused', pool.key)
                     return False
                 except TradingError as exc:
-                    self.store.set_error(pool.key,'FAILED_BUY',str(exc))
-                    self.store.log('BUY_FAILED',pool.key,str(exc))
+                    self.store.set_error(pool.key,'FAILED_BUY',self.cfg.scrub(exc))
+                    self.store.log('BUY_FAILED',pool.key,self.cfg.scrub(exc))
                     return False
                 except Exception as exc:
                     # Unknown failure after intent; assume money might have moved.
@@ -112,7 +112,7 @@ class Engine:
                 return True
             except (RiskRejection, TradingError) as exc:
                 # Stale/low-liquidity/untradeable candidates are not fatal to the engine.
-                self.store.log('ENTRY_SKIPPED',pool.key,str(exc))
+                self.store.log('ENTRY_SKIPPED',pool.key,self.cfg.scrub(exc))
                 return False
             except Exception as exc:
                 self.store.log('ENTRY_ERROR',pool.key,exc.__class__.__name__)
@@ -120,13 +120,18 @@ class Engine:
                 return False
 
     def min_exit_proceeds(self, spent_units: int) -> int:
-        """Principal + profit target + explicit reserve, in 6-decimal stable units.
+        """Principal + profit target + bps buffer + flat gas reserve, in
+        6-decimal stable units.
 
-        This is NOT true net USD PnL: blockchain gas and stablecoin depegs are
-        excluded. The venue's conservative / onchain minimum must reach it.
+        The flat EXIT_GAS_RESERVE_USD term exists because network costs do not
+        scale with trade size; it is an operator-set estimate, not an oracle,
+        so this is still NOT true net USD PnL (actual gas, ATA rent and
+        stablecoin depegs can differ). The venue's enforced minimum must
+        reach this value before any sell is signed.
         """
         bps = 10000 + self.cfg.min_exit_profit_bps + self.cfg.exit_cost_buffer_bps
-        return (spent_units*bps + 9999)//10000
+        gas_reserve = int(self.cfg.exit_gas_reserve_usd * 1_000_000)
+        return (spent_units*bps + 9999)//10000 + gas_reserve
 
     def _hold_unprofitable(self, pool: Pool, current: dict, minimum: int,
                            conservative: int, reason: str = ''):
@@ -192,14 +197,14 @@ class Engine:
                 return False
             self.store.record_acceptable_exit_quote(pool.key,preview.min_out_units)
         except UncertainExecution as exc:
-            self.store.set_error(pool.key,'RECOVERY_SELL',str(exc))
+            self.store.set_error(pool.key,'RECOVERY_SELL',self.cfg.scrub(exc))
             self.store.set_flag('paused','1')
-            self.store.log('SELL_UNCERTAIN',pool.key,str(exc))
+            self.store.log('SELL_UNCERTAIN',pool.key,self.cfg.scrub(exc))
             return False
         except Exception as exc:
             # No sale initiated. Missing quote/route is NOT a sell attempt.
             delay = min(self.cfg.max_exit_retry_seconds,self.cfg.profit_recheck_seconds)
-            self.store.defer_quote_unavailable(pool.key,exc.__class__.__name__+': '+str(exc),delay)
+            self.store.defer_quote_unavailable(pool.key,exc.__class__.__name__+': '+self.cfg.scrub(exc),delay)
             self.store.log('SELL_QUOTE_RETRY',pool.key,f'{exc.__class__.__name__}; retry_in={delay}s')
             return False
         if not self.store.mark_selling(pool.key):
@@ -211,19 +216,19 @@ class Engine:
             fill = await backend.trade(pool,'sell',intended,min_output_units=minimum)
         except RiskRejection as exc:
             # Explicitly rejected BEFORE sending swap tx; do not liquidate.
-            self.store.reset_sell_after_price_change(pool.key,str(exc),self.cfg.profit_recheck_seconds)
-            self.store.log('HOLD_PRICE_MOVED',pool.key,str(exc))
+            self.store.reset_sell_after_price_change(pool.key,self.cfg.scrub(exc),self.cfg.profit_recheck_seconds)
+            self.store.log('HOLD_PRICE_MOVED',pool.key,self.cfg.scrub(exc))
             return False
         except UncertainExecution as exc:
-            self.store.set_error(pool.key,'RECOVERY_SELL',str(exc))
+            self.store.set_error(pool.key,'RECOVERY_SELL',self.cfg.scrub(exc))
             self.store.set_flag('paused','1')
-            self.store.log('SELL_UNCERTAIN',pool.key,str(exc))
+            self.store.log('SELL_UNCERTAIN',pool.key,self.cfg.scrub(exc))
             LOG.error('Exit uncertain for %s; manual reconciliation needed',pool.key)
             return False
         except TradingError as exc:
             delay = min(self.cfg.max_exit_retry_seconds,max(3,2**min(current['sell_attempts'],5)))
-            self.store.retry_sell(pool.key,str(exc),delay)
-            self.store.log('SELL_RETRY',pool.key,f'{exc}; retry_in={delay}s')
+            self.store.retry_sell(pool.key,self.cfg.scrub(exc),delay)
+            self.store.log('SELL_RETRY',pool.key,f'{self.cfg.scrub(exc)}; retry_in={delay}s')
             return False
         except Exception:
             self.store.set_error(pool.key,'RECOVERY_SELL','Unexpected execution error; reconcile')

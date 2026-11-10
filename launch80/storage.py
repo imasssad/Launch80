@@ -1,6 +1,5 @@
 """SQLite journal. BUYING/SELLING are durable pending intents: never replay blindly."""
 from __future__ import annotations
-import json
 import os
 import sqlite3
 import threading
@@ -238,10 +237,21 @@ class Store:
         with self.lock:
             return self.db.execute('SELECT COUNT(*) AS n FROM positions WHERE attempted_at >= ?', (time.time()-3600,)).fetchone()['n']
 
+    def abandon(self, key: str, reason: str) -> bool:
+        """Operator write-off after independent verification: terminal state,
+        frees position/exposure capacity, and the whole principal counts as a
+        realized loss (sell_received_units stays 0), so the daily loss cap
+        sees it. Never called by the engine: no automated loss-selling."""
+        with self.lock:
+            cur = self.db.execute("""UPDATE positions SET status='ABANDONED',sell_at=?,last_error=?
+                WHERE key=? AND status IN ('OPEN','MANUAL_EXIT')""",
+                (time.time(),str(reason)[:400],key))
+            return cur.rowcount == 1
+
     def daily_realized_usd(self):
         start = datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
         with self.lock:
-            rows = self.db.execute("SELECT buy_spent_units,sell_received_units FROM positions WHERE status='CLOSED' AND sell_at>=?",(start,)).fetchall()
+            rows = self.db.execute("SELECT buy_spent_units,sell_received_units FROM positions WHERE status IN ('CLOSED','ABANDONED') AND sell_at>=?",(start,)).fetchall()
             return sum((r['sell_received_units']-r['buy_spent_units']) for r in rows)/1_000_000
 
     def stats(self):

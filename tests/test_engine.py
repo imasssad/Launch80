@@ -2,7 +2,6 @@ from dataclasses import replace
 from decimal import Decimal
 import time
 import pytest
-from launch80.models import Pool
 from launch80.engine import Engine
 from conftest import FakeExchange,FakeFeed
 

@@ -8,7 +8,7 @@ import asyncio
 import base64
 import time
 import uuid
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal
 from typing import Literal
 
 from .config import Settings
@@ -69,7 +69,8 @@ class PaperExchange(Exchange):
 
     async def trade(self, pool: Pool, side: Side, amount: int, min_output_units: int | None = None) -> Fill:
         quote = await self.quote(pool,side,amount)
-        if min_output_units is not None and quote.min_out_units < min_output_units:
+        if min_output_units is not None and (quote.min_out_units is None
+                                             or quote.min_out_units < min_output_units):
             raise RiskRejection('Paper exit became unprofitable before fill')
         # Mark-to-live-spot at execution time, with fee and market impact above.
         return Fill(f'PAPER-{uuid.uuid4().hex[:18]}', amount, quote.out_units, 0)
@@ -356,25 +357,33 @@ class SolanaExchange(Exchange):
         return (self.cfg.solana_usdc,pool.mint) if side == 'buy' else (pool.mint,self.cfg.solana_usdc)
 
     async def _order(self,pool: Pool,side: Side,amount: int,execute: bool):
+        # Jupiter Swap V2 (/order + /execute) is the current API; V1 Metis is
+        # no longer actively maintained. slippageBps is always passed so the
+        # response's otherAmountThreshold is derived from OUR slippage, not an
+        # auto-chosen one. NEEDS LIVE VALIDATION with a funded wallet.
         src,dst=self._assets(pool,side)
-        params={'inputMint':src,'outputMint':dst,'amount':str(amount)}
+        params={'inputMint':src,'outputMint':dst,'amount':str(amount),
+                'slippageBps':self.cfg.slippage_bps}
         if execute:
             params['taker']=self.wallet
-            params['slippageBps']=self.cfg.slippage_bps
             params['maxSupportedTransactionVersion']=0
         return await self.api.get('https://api.jup.ag/swap/v2/order',
              params=params,headers={'x-api-key':self.cfg.jupiter_key}, retries=1)
 
-    async def _v1_sell_quote(self,pool: Pool,amount: int):
-        return await self.api.get('https://api.jup.ag/swap/v1/quote',
-            params={'inputMint':pool.mint,'outputMint':self.cfg.solana_usdc,
-                    'amount':str(amount),'swapMode':'ExactIn',
-                    'slippageBps':str(self.cfg.slippage_bps)},
-            headers={'x-api-key':self.cfg.jupiter_key},retries=1)
+    def _check_order_echo(self,order: dict,pool: Pool,side: Side,amount: int):
+        # Reject before signing when the venue explicitly reports a different
+        # pair or input amount; absent fields keep the fail-closed floor and
+        # balance checks as the only guards.
+        src,dst = self._assets(pool,side)
+        if order.get('inputMint') is not None and str(order['inputMint']) != src:
+            raise RiskRejection('Jupiter order input mint does not match intent')
+        if order.get('outputMint') is not None and str(order['outputMint']) != dst:
+            raise RiskRejection('Jupiter order output mint does not match intent')
+        if order.get('inAmount') is not None and str(order['inAmount']) != str(amount):
+            raise RiskRejection('Jupiter order input amount does not match intent')
 
     async def quote(self,pool: Pool,side: Side,amount: int) -> Quote:
-        r = await (self._v1_sell_quote(pool,amount) if side == 'sell'
-                   else self._order(pool,side,amount,False))
+        r = await self._order(pool,side,amount,False)
         if r.get('errorCode') or int(r.get('outAmount',0)) <= 0:
             raise TradingError('Jupiter no route or no output')
         impact = r.get('priceImpactPct')
@@ -384,7 +393,7 @@ class SolanaExchange(Exchange):
                 bps = int(Decimal(str(impact))*10000)
             except Exception:
                 pass
-        threshold = r.get('otherAmountThreshold') if side == 'sell' else None
+        threshold = r.get('otherAmountThreshold')
         return Quote(int(r['outAmount']), bps,
                      int(threshold) if threshold is not None else None)
 
@@ -404,55 +413,35 @@ class SolanaExchange(Exchange):
         return base64.b64encode(bytes(signed)).decode('ascii')
 
     async def _sell_with_minimum(self,pool: Pool,amount: int,min_output_units: int) -> Fill:
-        # Jupiter V1 exact-in route exposes its slippage-enforced minimum output.
-        # V2 Meta-Aggregator /order does not document a minimum output field.
-        # Prefer this constrained route over silently signing a V2 swap at a loss.
-        q = await self._v1_sell_quote(pool,amount)
-        if (q.get('error') or q.get('inputMint') != pool.mint or
-            q.get('outputMint') != self.cfg.solana_usdc or
-            int(q.get('inAmount') or 0) != amount or
-            int(q.get('otherAmountThreshold') or 0) < min_output_units):
+        # Jupiter Swap V2 /order returns otherAmountThreshold: the minimum
+        # output the swap instruction enforces on-chain at the slippage we
+        # requested. The sell is only signed when that enforced minimum clears
+        # the profit floor, and proceeds are measured from the real stablecoin
+        # balance delta, never from the quote. NEEDS LIVE VALIDATION: a funded
+        # acceptance test must confirm the threshold is enforced on-chain.
+        order = await self._order(pool,'sell',amount,True)
+        if order.get('errorCode') or not order.get('transaction') or not order.get('requestId'):
+            raise TradingError('Jupiter executable sell order unavailable')
+        self._check_order_echo(order,pool,'sell',amount)
+        if int(order.get('otherAmountThreshold') or 0) < min_output_units:
             raise RiskRejection('Jupiter minimum output below profit floor; keep holding')
         before = await self._stable_balance()
-        swap = await self.api.post('https://api.jup.ag/swap/v1/swap',
-            headers={'x-api-key':self.cfg.jupiter_key},
-            data={'userPublicKey':self.wallet,'quoteResponse':q,
-                  'dynamicComputeUnitLimit':True,
-                  'prioritizationFeeLamports':{
-                       'priorityLevelWithMaxLamports':{'priorityLevel':'high','maxLamports':250000}},
-                  'dynamicSlippage':False})
-        if not swap.get('swapTransaction'):
-            raise TradingError('Jupiter could not build bounded sell transaction')
-        signed = self._sign_transaction(swap['swapTransaction'],self.signer)
-        # Sending may succeed even when the RPC times out. Never retry blindly.
+        signed = self._sign_transaction(order['transaction'],self.signer)
+        # /execute broadcasts and confirms server-side. Any transport failure
+        # after this point is uncertain: the swap may have landed anyway.
         try:
-            signature = await self._rpc('sendTransaction',[signed,{
-                'encoding':'base64','skipPreflight':False,'maxRetries':0}])
+            result = await self.api.post('https://api.jup.ag/swap/v2/execute',
+                headers={'x-api-key':self.cfg.jupiter_key},
+                data={'signedTransaction':signed,'requestId':order['requestId']})
         except Exception as exc:
-            raise UncertainExecution('Solana sell broadcast unknown; reconcile before retry') from exc
-        if not signature:
-            raise UncertainExecution('Missing Solana sell transaction signature')
-        deadline=time.monotonic()+90
-        while time.monotonic() < deadline:
-            try:
-                result = await self._rpc('getSignatureStatuses',[[signature],{'searchTransactionHistory':True}])
-            except Exception:
-                await asyncio.sleep(1)
-                continue
-            statuses=(result or {}).get('value') or []
-            status=statuses[0] if statuses else None
-            if status:
-                if status.get('err') is not None:
-                    # Confirmed error, no output settled; gas is still consumed.
-                    raise TradingError('Solana bounded sell failed onchain: '+str(signature))
-                if status.get('confirmationStatus') in ('confirmed','finalized'):
-                    after=await self._stable_balance()
-                    received=after-before
-                    if received < min_output_units:
-                        raise UncertainExecution('Swap confirmed but output below floor; inspect tx '+str(signature))
-                    return Fill(str(signature),amount,received)
-            await asyncio.sleep(1)
-        raise UncertainExecution('Solana sell confirmation timed out: '+str(signature))
+            raise UncertainExecution('Jupiter sell execution status unknown; reconcile signature/balances') from exc
+        if result.get('status') != 'Success' or result.get('code') != 0:
+            raise UncertainExecution('Jupiter returned a failed sell execution; reconcile onchain signature')
+        after = await self._stable_balance()
+        received = after-before
+        if received < min_output_units:
+            raise UncertainExecution('Swap confirmed but output below floor; inspect tx '+str(result.get('signature')))
+        return Fill(str(result.get('signature')),amount,received)
 
     async def _stable_balance(self) -> int:
         data = await self._rpc('getTokenAccountsByOwner',[self.wallet,
@@ -470,15 +459,7 @@ class SolanaExchange(Exchange):
             order = await self._order(pool,side,amount,True)
             if order.get('errorCode') or not order.get('transaction') or not order.get('requestId'):
                 raise TradingError('Jupiter executable order unavailable')
-            # Mint/amount echo before signing (the V1 sell path already does
-            # this); only a present-but-different value rejects.
-            src,dst = self._assets(pool,side)
-            if order.get('inputMint') is not None and str(order['inputMint']) != src:
-                raise RiskRejection('Jupiter order input mint does not match intent')
-            if order.get('outputMint') is not None and str(order['outputMint']) != dst:
-                raise RiskRejection('Jupiter order output mint does not match intent')
-            if order.get('inAmount') is not None and str(order['inAmount']) != str(amount):
-                raise RiskRejection('Jupiter order input amount does not match intent')
+            self._check_order_echo(order,pool,side,amount)
             signed = self._sign_transaction(order['transaction'],self.signer)
             try:
                 result = await self.api.post('https://api.jup.ag/swap/v2/execute',

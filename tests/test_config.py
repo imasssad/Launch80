@@ -1,6 +1,5 @@
 from dataclasses import replace
 import pytest
-from launch80.config import Settings
 
 def test_live_requires_clear_ack(cfg):
     with pytest.raises(ValueError,match='LIVE_ACK'):
