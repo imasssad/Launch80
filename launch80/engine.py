@@ -311,7 +311,13 @@ class Engine:
                         await self.enter(p)
                         break
             try:
-                await asyncio.wait_for(self._stopped.wait(),timeout=0.5)
+                # Entry pacing is separate from the exit loop's fixed tick, so
+                # slowing entries never delays an exit. Each entry evaluation
+                # costs several price-feed requests, so a fast tick will
+                # exhaust a rate-limited feed and starve the exit quotes that
+                # actually matter.
+                await asyncio.wait_for(self._stopped.wait(),
+                                       timeout=self.cfg.entry_interval_seconds)
             except asyncio.TimeoutError:
                 pass
 

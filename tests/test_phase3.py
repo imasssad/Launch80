@@ -374,3 +374,51 @@ async def test_engine_marks_failed_buy_not_recovery_on_paper_feed_error(cfg, sto
     assert row['status'] == 'FAILED_BUY'          # not RECOVERY_BUY
     assert store.flag('paused') == '0'            # trading not halted
     assert not store.has_unknowns()
+
+
+# --- F9: entry pacing is configurable and independent of exits ---------------
+
+def test_entry_interval_default_and_bounds(monkeypatch, cfg):
+    monkeypatch.delenv('ENTRY_INTERVAL_SECONDS', raising=False)
+    assert Settings.load().entry_interval_seconds == Decimal('2')
+    for bad in ('0', '0.05', '301'):
+        with pytest.raises(ValueError, match='ENTRY_INTERVAL_SECONDS'):
+            replace(cfg, entry_interval_seconds=Decimal(bad)).validate()
+    replace(cfg, entry_interval_seconds=Decimal('0.1')).validate()
+    replace(cfg, entry_interval_seconds=Decimal('300')).validate()
+
+
+async def test_entry_loop_waits_the_configured_interval(cfg, store):
+    """The entry loop must pace on cfg, not a hardcoded 0.5s tick."""
+    en, _ = engine(replace(cfg, entry_interval_seconds=Decimal('7')), store)
+    waits = []
+    real_wait_for = asyncio.wait_for
+
+    async def record(aw, timeout=None):
+        waits.append(timeout)
+        en._stopped.set()           # stop after the first tick
+        return await real_wait_for(aw, timeout=0.1)
+    asyncio.wait_for = record
+    try:
+        await en._entry_loop()
+    finally:
+        asyncio.wait_for = real_wait_for
+    assert waits == [Decimal('7')]
+
+
+async def test_exit_loop_tick_is_unaffected_by_entry_interval(cfg, store):
+    """Slowing entries must never slow exits: they are separate loops."""
+    en, _ = engine(replace(cfg, entry_interval_seconds=Decimal('300')), store)
+    waits = []
+    real_wait_for = asyncio.wait_for
+
+    async def record(aw, timeout=None):
+        waits.append(timeout)
+        en._stopped.set()
+        return await real_wait_for(aw, timeout=0.1)
+    asyncio.wait_for = record
+    try:
+        await en._exit_loop()
+    finally:
+        asyncio.wait_for = real_wait_for
+    assert waits == [0.5]

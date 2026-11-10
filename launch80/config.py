@@ -48,6 +48,7 @@ class Settings:
     min_age_seconds: int
     max_age_seconds: int
     poll_seconds: int
+    entry_interval_seconds: Decimal
     page_count: int
     max_buy_attempts_per_hour: int
     max_consecutive_feed_failures: int
@@ -98,6 +99,10 @@ class Settings:
             min_age_seconds=int(os.getenv('MIN_POOL_AGE_SECONDS', '12')),
             max_age_seconds=int(os.getenv('MAX_POOL_AGE_SECONDS', '150')),
             poll_seconds=int(os.getenv('POLL_SECONDS', '30')),
+            # Seconds between entry evaluations. Each one costs several
+            # price-feed requests, so this is the main lever on API quota.
+            # Raise it on a rate-limited (free-tier) feed.
+            entry_interval_seconds=_d('ENTRY_INTERVAL_SECONDS', '2'),
             page_count=int(os.getenv('PAGE_COUNT', '2')),
             max_buy_attempts_per_hour=int(os.getenv('MAX_BUY_ATTEMPTS_PER_HOUR', '10')),
             max_consecutive_feed_failures=int(os.getenv('MAX_CONSECUTIVE_FEED_FAILURES', '5')),
@@ -184,6 +189,8 @@ class Settings:
             raise ValueError('Pool age limits invalid')
         if not 5 <= self.poll_seconds <= 600:
             raise ValueError('POLL_SECONDS invalid')
+        if not Decimal('0.1') <= self.entry_interval_seconds <= 300:
+            raise ValueError('ENTRY_INTERVAL_SECONDS must be 0.1..300')
         if not 1 <= self.page_count <= 5:
             raise ValueError('PAGE_COUNT invalid')
         if not 1 <= self.max_buy_attempts_per_hour <= 1000:
