@@ -68,7 +68,19 @@ class PaperExchange(Exchange):
         return Quote(output_units, impact, output_units*(10000-100)//10000)
 
     async def trade(self, pool: Pool, side: Side, amount: int, min_output_units: int | None = None) -> Fill:
-        quote = await self.quote(pool,side,amount)
+        try:
+            quote = await self.quote(pool,side,amount)
+        except TradingError:
+            raise
+        except Exception as exc:
+            # Paper execution signs and broadcasts NOTHING, so a failed
+            # simulation is a CONFIRMED non-execution, never an uncertain one.
+            # Letting a transport error (e.g. a 429 from the price feed) escape
+            # as an unexpected exception would make the engine quarantine the
+            # position as RECOVERY_BUY and halt trading for manual onchain
+            # reconciliation of a trade that could not possibly have happened.
+            # Mapping it to TradingError keeps that quarantine for real sends.
+            raise TradingError(f'Paper fill unavailable: {exc.__class__.__name__}') from exc
         if min_output_units is not None and (quote.min_out_units is None
                                              or quote.min_out_units < min_output_units):
             raise RiskRejection('Paper exit became unprofitable before fill')
