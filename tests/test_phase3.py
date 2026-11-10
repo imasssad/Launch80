@@ -308,3 +308,69 @@ async def test_concurrent_exits_sell_exactly_once(cfg, store, pool):
     assert results.count(True) == 1
     assert ex.trades.count('sell') == 1
     assert store.get(pool.key)['status'] == 'CLOSED'
+
+
+# --- F8: paper transport errors must not fake an uncertain execution ---------
+
+async def test_paper_feed_error_is_confirmed_failure_not_uncertain(cfg, store, pool):
+    """A 429 from the price feed inside PaperExchange.trade must NOT quarantine.
+
+    Paper execution broadcasts nothing, so a failed simulation is a confirmed
+    non-execution. Leaking a raw transport error made the engine record
+    RECOVERY_BUY and halt all trading for onchain reconciliation of a trade
+    that never existed.
+    """
+    import httpx
+    from launch80.exchange import PaperExchange
+    from launch80.models import TradingError
+
+    ex = PaperExchange('solana', api=None)
+
+    async def rate_limited(p, side, amount):
+        request = httpx.Request('GET', 'https://api.geckoterminal.com/x')
+        raise httpx.HTTPStatusError('429 Too Many Requests', request=request,
+                                    response=httpx.Response(429, request=request))
+    ex.quote = rate_limited
+    with pytest.raises(TradingError, match='Paper fill unavailable'):
+        await ex.trade(pool, 'buy', 5_000_000)
+
+
+async def test_engine_marks_failed_buy_not_recovery_on_paper_feed_error(cfg, store, pool):
+    import httpx
+    from launch80.exchange import PaperExchange
+
+    ex = PaperExchange('solana', api=None)
+
+    async def ok_quote(p, side, amount):
+        from launch80.models import Quote
+        return Quote(amount * 1000, 20, amount * 1000)
+
+    async def fail_on_trade(p, side, amount):
+        request = httpx.Request('GET', 'https://api.geckoterminal.com/x')
+        raise httpx.HTTPStatusError('429', request=request,
+                                    response=httpx.Response(429, request=request))
+
+    async def balance(p):
+        return 0
+
+    async def safety(p):
+        return None
+    ex.token_balance = balance
+    ex.token_safety = safety
+    en = Engine(cfg, store, FakeFeed(), {'solana': ex})
+
+    calls = {'n': 0}
+
+    async def quote_then_fail(p, side, amount):
+        # risk-gate quotes succeed; the quote inside trade() rate-limits
+        calls['n'] += 1
+        if calls['n'] <= 2:
+            return await ok_quote(p, side, amount)
+        return await fail_on_trade(p, side, amount)
+    ex.quote = quote_then_fail
+
+    assert not await en.enter(pool)
+    row = store.get(pool.key)
+    assert row['status'] == 'FAILED_BUY'          # not RECOVERY_BUY
+    assert store.flag('paused') == '0'            # trading not halted
+    assert not store.has_unknowns()
