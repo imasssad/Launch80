@@ -108,8 +108,10 @@ class RobinhoodExchange(Exchange):
         self.lock = asyncio.Lock()
         self.usdg = Web3.to_checksum_address(cfg.robinhood_usdg)
         self.allowed_spenders = set(a.lower() for a in cfg.approved_allowance_spenders)
-        self.allowed_targets = set(a.strip().lower() for a in
-                                   __import__('os').getenv('ZEROX_APPROVED_TX_TARGETS','').split(',') if a.strip())
+        # Sourced from validated Settings, not re-read from the process
+        # environment, so the live allowlist cannot diverge from the config
+        # that Settings.validate() already checked.
+        self.allowed_targets = set(a.lower() for a in cfg.approved_tx_targets)
         if not self.allowed_targets:
             raise ValueError('Live Robinhood needs ZEROX_APPROVED_TX_TARGETS verified from official 0x settlement addresses')
 
@@ -308,8 +310,10 @@ class SolanaExchange(Exchange):
 
     async def validate_network(self):
         result = await self._rpc('getGenesisHash',[])
-        # Solana mainnet genesis hash, independently check before live deployment.
-        if result != '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp':
+        # Full 44-char mainnet-beta genesis hash (NOT the 32-char CAIP-2 chain
+        # id prefix). Settings.validate() has already checked that the expected
+        # value decodes to 32 bytes. Re-verify independently before going live.
+        if result != self.cfg.solana_expected_genesis:
             raise TradingError('RPC is not Solana mainnet-beta')
         mint = await self._rpc('getAccountInfo',[self.cfg.solana_usdc,
                                {'encoding':'jsonParsed','commitment':'confirmed'}])

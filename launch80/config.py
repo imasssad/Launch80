@@ -6,6 +6,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Full 44-character base58 genesis hash of the Solana mainnet-beta cluster.
+# NOTE: do NOT confuse this with the CAIP-2 chain identifier
+# 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', which is only the first 32
+# characters of this value. Using that prefix makes the mainnet check
+# unsatisfiable. Verify with `solana genesis-hash --url mainnet-beta`.
+SOLANA_MAINNET_GENESIS_HASH = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+
+
 def _b(s: str, default: bool = False) -> bool:
     raw = os.getenv(s, str(default)).strip().lower()
     if raw not in ('true', 'false', '1', '0', 'yes', 'no'):
@@ -52,8 +60,10 @@ class Settings:
     evm_private_key: str
     solana_private_key: str
     approved_allowance_spenders: tuple[str, ...]
+    approved_tx_targets: tuple[str, ...]
     robinhood_usdg: str
     solana_usdc: str
+    solana_expected_genesis: str
     require_robinhood_simulation: bool
     garp_enrich: bool
     garp_require_launchpad: bool
@@ -99,8 +109,12 @@ class Settings:
             evm_private_key=os.getenv('EVM_PRIVATE_KEY', ''),
             solana_private_key=os.getenv('SOLANA_PRIVATE_KEY_B58', ''),
             approved_allowance_spenders=tuple(x.strip().lower() for x in os.getenv('ZEROX_APPROVED_SPENDERS', '').split(',') if x.strip()),
+            approved_tx_targets=tuple(x.strip().lower() for x in os.getenv('ZEROX_APPROVED_TX_TARGETS', '').split(',') if x.strip()),
             robinhood_usdg='0x5fc5360d0400a0fd4f2af552add042d716f1d168',
             solana_usdc='EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            # An empty value in .env means "use the built-in default".
+            solana_expected_genesis=(os.getenv('SOLANA_EXPECTED_GENESIS_HASH', '').strip()
+                                     or SOLANA_MAINNET_GENESIS_HASH),
             require_robinhood_simulation=_b('REQUIRE_ROBINHOOD_SIMULATION', True),
             garp_enrich=_b('GARP_ENRICH', True),
             garp_require_launchpad=_b('GARP_REQUIRE_LAUNCHPAD', False),
@@ -145,6 +159,13 @@ class Settings:
             raise ValueError('PAGE_COUNT invalid')
         if not 1 <= self.max_buy_attempts_per_hour <= 1000:
             raise ValueError('MAX_BUY_ATTEMPTS_PER_HOUR invalid')
+        # A non-positive retry delay schedules the next attempt in the past and
+        # turns the exit loop into an unthrottled re-quote loop against the venue.
+        if not 1 <= self.max_exit_retry_seconds <= 3600:
+            raise ValueError('MAX_EXIT_RETRY_SECONDS must be 1..3600')
+        # Zero or negative would latch the entry circuit breaker on the first poll.
+        if not 1 <= self.max_consecutive_feed_failures <= 1000:
+            raise ValueError('MAX_CONSECUTIVE_FEED_FAILURES must be 1..1000')
         if not 1 <= self.max_exit_attempts <= 100:
             raise ValueError('MAX_EXIT_ATTEMPTS invalid')
         if not 0 <= self.min_exit_profit_bps <= 10000:
@@ -159,6 +180,18 @@ class Settings:
             raise ValueError('UNDERWATER_PAUSE_BPS must be 1..10000')
         if self.garp_require_launchpad and not self.garp_enrich:
             raise ValueError('GARP_REQUIRE_LAUNCHPAD needs GARP_ENRICH=true')
+        if self.enable_solana:
+            # Fail closed on a truncated or malformed hash: a 32-byte base58
+            # value is the only thing getGenesisHash can ever return, so an
+            # invalid constant would make the mainnet guard unsatisfiable.
+            import base58
+            try:
+                decoded = base58.b58decode(self.solana_expected_genesis)
+            except Exception as exc:
+                raise ValueError(f'SOLANA_EXPECTED_GENESIS_HASH is not valid base58: {exc}') from exc
+            if len(decoded) != 32:
+                raise ValueError('SOLANA_EXPECTED_GENESIS_HASH must decode to 32 bytes '
+                                 f'(got {len(decoded)}); a CAIP-2 chain id prefix is not a genesis hash')
         if self.live:
             if self.live_ack != 'I_ACCEPT_POSSIBLE_TOTAL_LOSS':
                 raise ValueError('Live mode requires LIVE_ACK=I_ACCEPT_POSSIBLE_TOTAL_LOSS')
@@ -166,6 +199,11 @@ class Settings:
                 raise ValueError('Live buying requires LIVE_BUY_ACK=I_ENABLE_REAL_PURCHASES')
             if self.enable_robinhood and not (self.zero_x_key and self.evm_private_key and self.approved_allowance_spenders):
                 raise ValueError('Live Robinhood requires ZEROX_API_KEY, EVM_PRIVATE_KEY, ZEROX_APPROVED_SPENDERS')
+            # Validated here rather than inside the adapter so a missing
+            # allowlist is reported as a configuration error, not a traceback.
+            if self.enable_robinhood and not self.approved_tx_targets:
+                raise ValueError('Live Robinhood requires ZEROX_APPROVED_TX_TARGETS verified from '
+                                 'official 0x settlement addresses')
             if self.enable_solana and not (self.jupiter_key and self.solana_private_key):
                 raise ValueError('Live Solana requires JUPITER_API_KEY, SOLANA_PRIVATE_KEY_B58')
             if self.enable_robinhood and 'alchemy' not in self.robinhood_rpc and 'chainstack' not in self.robinhood_rpc and 'quiknode' not in self.robinhood_rpc:

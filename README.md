@@ -28,8 +28,8 @@ The scanner detects actual GeckoTerminal liquidity pools with **reported liquidi
 ## Quick start — paper mode
 
 ```bash
-unzip launch80-bot-profit.zip
-cd launch80-bot-profit
+git clone https://github.com/imasssad/Launch80.git
+cd Launch80
 cp .env.example .env
 # LIVE=false; no wallet keys required.
 # For paper trades, set BUY_ENABLED=true in .env first.
@@ -141,13 +141,15 @@ launch80 resume
 - **0x** uses a verified allowed transaction target and exact allowances, but only on-chain receipts and a security review can establish correct output, calldata, nonce/fee handling and approvals for a particular live token.
 - **Jupiter V1 sell path** was chosen for its explicit output threshold and is not actively maintained; its program-level slippage assertion needs live acceptance verification before nontrivial deployment.
 - **New liquidity pool detection** is poll-based and the $5K liquidity figure does not guarantee usable exit liquidity. Garp and external token-risk scans are informative only and may be delayed or unavailable.
+- **Unverified third-party response shapes.** `GARP_REQUIRE_LAUNCHPAD=true` compares Garp's `chainId` against the GeckoTerminal network slug and may therefore reject every candidate; confirm the real response before enabling it. The 0x path validates the settlement target, allowance spender, `sellAmount` and `minBuyAmount`, but does not verify that the quote echoes the intended `sellToken`/`buyToken`. See `AUDIT.md`.
 - Fees and priority costs on **failed swaps** are borne even if the protected transaction reverts. Gas is deliberately excluded from realized PnL. Hot-wallet custody and infrastructure failures are outside this bot's protection.
 
 ## Project files
 
-Read `LIVE_READINESS_CHECKLIST.md` and complete every blocking gate before funded unattended execution. The bot is not live-certified.
+Read `LIVE_READINESS_CHECKLIST.md` and complete every blocking gate before funded unattended execution. The bot is not live-certified. `AUDIT.md` records the static import audit: what was fixed, what was reviewed and found sound, and seven known issues deliberately left for the funded acceptance gates.
 
 
+- `AUDIT.md`: static import audit — fixed defects, verified invariants, open issues
 - `launch80/engine.py`: profit gate, independent exit and discovery loops, buy risk limits
 - `launch80/exchange.py`: paper, 0x Robinhood and Jupiter Solana adapters with execution floor checks
 - `launch80/storage.py`: SQLite state journal, mode lock, underwater and restart tracking

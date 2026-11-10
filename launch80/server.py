@@ -1,11 +1,12 @@
 """Local-only monitoring. Mutating endpoints require a configured long bearer token."""
 from __future__ import annotations
 from fastapi import FastAPI, Header, HTTPException
+from . import __version__
 from .storage import Store
 from .config import Settings
 
 def create_app(store: Store, cfg: Settings) -> FastAPI:
-    app = FastAPI(title='Launch80 Monitoring', version='1.0.0', docs_url=None, redoc_url=None)
+    app = FastAPI(title='Launch80 Monitoring', version=__version__, docs_url=None, redoc_url=None)
 
     @app.get('/health')
     def health():
@@ -29,8 +30,12 @@ def create_app(store: Store, cfg: Settings) -> FastAPI:
         import hmac
         if not cfg.control_token:
             raise HTTPException(403,'HTTP controls disabled; set CONTROL_TOKEN or use CLI')
-        expected='Bearer '+cfg.control_token
-        if not authorization or not hmac.compare_digest(authorization,expected):
+        expected=('Bearer '+cfg.control_token).encode('utf-8')
+        if not authorization:
+            raise HTTPException(401,'Authorization required')
+        # Compare bytes: compare_digest rejects non-ASCII str operands with
+        # TypeError, which would surface a non-ASCII header as a 500.
+        if not hmac.compare_digest(authorization.encode('utf-8','surrogateescape'),expected):
             raise HTTPException(401,'Authorization required')
 
     @app.post('/pause')
