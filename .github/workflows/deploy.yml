@@ -1,0 +1,77 @@
+name: Deploy
+
+# Auto-deploy on every push to main, after the test gate passes.
+# Secrets required (Settings -> Secrets and variables -> Actions):
+#   DEPLOY_HOST        server IP or hostname
+#   DEPLOY_USER        ssh user
+#   DEPLOY_PATH        absolute app dir on the server (e.g. /var/www/vhosts/.../launch80)
+#   DEPLOY_SSH_KEY     PRIVATE half of a dedicated ed25519 deploy key (never a password)
+#   DEPLOY_KNOWN_HOSTS output of `ssh-keyscan -t ed25519 <host>` - pins the host key
+#
+# NOTE: this deploys CODE only. It never writes .env, data/ or the SQLite
+# journal, so wallet keys and trading state live only on the server and
+# LIVE/BUY_ENABLED are never changed by CI.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never let two deploys race on one server.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test gate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e '.[dev]'
+      - run: pytest -q
+      - run: python -m compileall -q launch80
+
+  deploy:
+    name: Deploy to server
+    needs: test          # a red suite blocks the deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH with pinned host key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Sync code (excludes secrets and trading state)
+        run: |
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.env' \
+            --exclude='data/' \
+            --exclude='.venv/' \
+            --exclude='__pycache__/' \
+            --exclude='*.sqlite*' \
+            -e "ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes" \
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Install, test on server, restart, health check
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "bash ${{ secrets.DEPLOY_PATH }}/scripts/remote_update.sh"
