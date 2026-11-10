@@ -1,0 +1,25 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_PATH: /app/data/launch80.sqlite
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 8088
+    ports:
+      - "127.0.0.1:8088:8088"
+    volumes:
+      - launch80-data:/app/data
+    stop_grace_period: 150s
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+
+volumes:
+  launch80-data:
