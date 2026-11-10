@@ -36,11 +36,32 @@ class PaperExchange(Exchange):
     Synthetic token denomination is 1e9 units/token. Not a fill simulation of
     the underlying venue; it is a *rough* paper execution model, never a PnL guarantee.
     """
+    # One entry evaluation calls quote(buy), quote(sell) and then trade() ->
+    # quote() again, so without this the SAME pool's price was fetched three
+    # times within about a second. On a rate-limited feed that tripled the
+    # cost of every candidate and was the main reason entries failed. A price
+    # is reused only for a few seconds, which is well inside the noise of a
+    # model that already calls itself rough.
+    SPOT_TTL_SECONDS = 5.0
+
     def __init__(self, chain: str, api: Api):
         self.chain, self.api = chain, api
         self.fee_bps = 150  # combined protocol/aggregator approximation per side
+        self._spot_cache: dict[str, tuple[float, Decimal, Decimal]] = {}
 
     async def _spot(self, pool: Pool):
+        cached = self._spot_cache.get(pool.key)
+        if cached is not None and (time.monotonic() - cached[0]) < self.SPOT_TTL_SECONDS:
+            return cached[1], cached[2]
+        price, liquidity = await self._fetch_spot(pool)
+        self._spot_cache[pool.key] = (time.monotonic(), price, liquidity)
+        if len(self._spot_cache) > 512:                     # bound the dict
+            oldest = sorted(self._spot_cache.items(), key=lambda kv: kv[1][0])[:256]
+            for key, _ in oldest:
+                self._spot_cache.pop(key, None)
+        return price, liquidity
+
+    async def _fetch_spot(self, pool: Pool):
         data = await self.api.get(f'https://api.geckoterminal.com/api/v2/networks/{pool.chain}/pools/{pool.pool}')
         a = data['data']['attributes']
         price = Decimal(str(a['base_token_price_usd']))

@@ -40,7 +40,7 @@ def parser():
 
 
 async def run(cfg: Settings,store: Store):
-    api=Api()
+    api=Api(min_interval=float(cfg.feed_min_interval_seconds))
     try:
         ex={}
         if cfg.enable_robinhood:

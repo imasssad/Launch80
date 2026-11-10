@@ -30,10 +30,30 @@ def _retry_after_seconds(raw: str | None, cap: float = 8.0) -> float:
 
 
 class Api:
-    def __init__(self, timeout=12.0):
+    """Bounded HTTP client with optional client-side pacing.
+
+    ``min_interval`` enforces a minimum gap between outbound requests. A
+    free-tier price feed rejects bursts even when the per-minute average is
+    well inside its quota, and every rejection costs a trade; spacing requests
+    keeps demand under the limit instead of discovering it by being refused.
+    """
+
+    def __init__(self, timeout=12.0, min_interval: float = 0.0):
         from . import __version__
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=False,
                                         headers={'User-Agent': f'Launch80/{__version__}'})
+        self.min_interval = max(0.0, float(min_interval))
+        self._pace_lock = asyncio.Lock()
+        self._last_request = 0.0
+
+    async def _pace(self):
+        if self.min_interval <= 0:
+            return
+        async with self._pace_lock:
+            wait = self._last_request + self.min_interval - asyncio.get_running_loop().time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request = asyncio.get_running_loop().time()
 
     async def close(self):
         await self.client.aclose()
@@ -41,6 +61,7 @@ class Api:
     async def get(self, url, *, params=None, headers=None, retries=2):
         for n in range(retries + 1):
             try:
+                await self._pace()
                 response = await self.client.get(url, params=params, headers=headers)
                 if response.status_code in (429, 500, 502, 503, 504) and n < retries:
                     delay = _retry_after_seconds(response.headers.get('Retry-After'))

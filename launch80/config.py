@@ -49,6 +49,7 @@ class Settings:
     max_age_seconds: int
     poll_seconds: int
     entry_interval_seconds: Decimal
+    feed_min_interval_seconds: Decimal
     page_count: int
     max_buy_attempts_per_hour: int
     max_consecutive_feed_failures: int
@@ -108,6 +109,10 @@ class Settings:
             # price-feed requests, so this is the main lever on API quota.
             # Raise it on a rate-limited (free-tier) feed.
             entry_interval_seconds=_d('ENTRY_INTERVAL_SECONDS', '2'),
+            # Minimum gap between outbound price-feed requests. The public
+            # GeckoTerminal tier allows roughly 30/min and rejects bursts, so
+            # 2s keeps us inside it. Set 0 on a paid plan.
+            feed_min_interval_seconds=_d('FEED_MIN_INTERVAL_SECONDS', '2'),
             page_count=int(os.getenv('PAGE_COUNT', '2')),
             max_buy_attempts_per_hour=int(os.getenv('MAX_BUY_ATTEMPTS_PER_HOUR', '10')),
             max_consecutive_feed_failures=int(os.getenv('MAX_CONSECUTIVE_FEED_FAILURES', '5')),
@@ -204,6 +209,8 @@ class Settings:
             raise ValueError('POLL_SECONDS invalid')
         if not Decimal('0.1') <= self.entry_interval_seconds <= 300:
             raise ValueError('ENTRY_INTERVAL_SECONDS must be 0.1..300')
+        if not 0 <= self.feed_min_interval_seconds <= 60:
+            raise ValueError('FEED_MIN_INTERVAL_SECONDS must be 0..60')
         if not 1 <= self.page_count <= 5:
             raise ValueError('PAGE_COUNT invalid')
         if not 1 <= self.max_buy_attempts_per_hour <= 1000:

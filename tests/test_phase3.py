@@ -501,3 +501,104 @@ async def test_5xx_still_retries_with_backoff(monkeypatch):
     finally:
         await api.close()
     assert attempts['n'] == 3
+
+
+# --- F11: stop wasting the feed quota on duplicate spot lookups -------------
+
+async def test_entry_evaluation_fetches_each_pool_price_once(cfg, store, pool):
+    """One entry used to cost three identical spot requests.
+
+    quote(buy), quote(sell) and trade()->quote() all hit the same pool within
+    about a second. On a rate-limited feed that tripled the cost of every
+    candidate and was the dominant reason entries failed.
+    """
+    from launch80.exchange import PaperExchange
+    ex = PaperExchange('solana', api=None)
+    calls = {'n': 0}
+
+    async def counting_fetch(p):
+        calls['n'] += 1
+        return Decimal('0.001'), Decimal('50000')
+    ex._fetch_spot = counting_fetch
+
+    await ex.quote(pool, 'buy', 5_000_000)
+    q = await ex.quote(pool, 'sell', 5_000_000_000)
+    await ex.trade(pool, 'buy', 5_000_000)
+    assert calls['n'] == 1, f'expected 1 upstream fetch per entry, made {calls["n"]}'
+    assert q.out_units > 0
+
+
+async def test_spot_cache_expires(cfg, pool):
+    from launch80.exchange import PaperExchange
+    ex = PaperExchange('solana', api=None)
+    ex.SPOT_TTL_SECONDS = 0.01
+    calls = {'n': 0}
+
+    async def counting_fetch(p):
+        calls['n'] += 1
+        return Decimal('0.001'), Decimal('50000')
+    ex._fetch_spot = counting_fetch
+    await ex._spot(pool)
+    await asyncio.sleep(0.05)
+    await ex._spot(pool)
+    assert calls['n'] == 2, 'a stale price must be refetched'
+
+
+async def test_spot_cache_is_per_pool(cfg, pool):
+    from launch80.exchange import PaperExchange
+    ex = PaperExchange('solana', api=None)
+    calls = {'n': 0}
+
+    async def counting_fetch(p):
+        calls['n'] += 1
+        return Decimal('0.001'), Decimal('50000')
+    ex._fetch_spot = counting_fetch
+    await ex._spot(pool)
+    await ex._spot(replace(pool, pool='differentpool'))
+    assert calls['n'] == 2, 'different pools must not share a cached price'
+
+
+# --- F12: pace requests so bursts never exceed the feed's limit -------------
+
+async def test_api_paces_requests(cfg):
+    """Average volume was already inside quota; bursts caused the rejections."""
+    import time as _time
+
+    import httpx
+    from launch80.http import Api
+
+    api = Api(min_interval=0.12)
+    api.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={'ok': True})))
+    try:
+        start = _time.monotonic()
+        for _ in range(4):
+            await api.get('https://api.geckoterminal.com/x')
+        elapsed = _time.monotonic() - start
+    finally:
+        await api.close()
+    assert elapsed >= 0.33, f'4 paced requests took only {elapsed:.3f}s'
+
+
+async def test_pacing_disabled_by_default_is_not_slow(cfg):
+    import time as _time
+
+    import httpx
+    from launch80.http import Api
+
+    api = Api()
+    api.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={'ok': True})))
+    try:
+        start = _time.monotonic()
+        for _ in range(5):
+            await api.get('https://api.geckoterminal.com/x')
+        assert _time.monotonic() - start < 0.2
+    finally:
+        await api.close()
+
+
+def test_feed_min_interval_bounds(cfg):
+    with pytest.raises(ValueError, match='FEED_MIN_INTERVAL_SECONDS'):
+        replace(cfg, feed_min_interval_seconds=Decimal('61')).validate()
+    replace(cfg, feed_min_interval_seconds=Decimal('0')).validate()
