@@ -76,7 +76,7 @@ class Engine:
                 # Recheck critical risk caps right before intent claim.
                 self.eligible_size(pool)
                 before = await backend.token_balance(pool)
-                if not self.store.claim(pool,before):
+                if not self.store.claim(pool,before,intended_spend_units=amount):
                     return False
                 self.store.log('BUY_INTENT',pool.key,f'USD atomic units={amount}; live={self.cfg.live}')
                 try:
@@ -174,8 +174,13 @@ class Engine:
         try:
             if self.cfg.live:
                 balance = await backend.token_balance(pool)
-                if balance < intended:
-                    raise UncertainExecution('Token balance below recorded position; reconcile before exit')
+                # Compare against the pre-buy baseline PLUS the recorded fill:
+                # a pre-existing holding of the same token must never mask a
+                # missing position, or the sell would liquidate tokens this
+                # position never bought.
+                baseline = int(current['before_token_balance'] or 0)
+                if balance < baseline + intended:
+                    raise UncertainExecution('Token balance below pre-buy baseline plus recorded position; reconcile before exit')
             minimum = self.min_exit_proceeds(int(current['buy_spent_units']))
             preview = await backend.quote(pool,'sell',intended)
             if preview.out_units <= 0:

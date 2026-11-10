@@ -206,7 +206,11 @@ class Settings:
                                  'official 0x settlement addresses')
             if self.enable_solana and not (self.jupiter_key and self.solana_private_key):
                 raise ValueError('Live Solana requires JUPITER_API_KEY, SOLANA_PRIVATE_KEY_B58')
-            if self.enable_robinhood and 'alchemy' not in self.robinhood_rpc and 'chainstack' not in self.robinhood_rpc and 'quiknode' not in self.robinhood_rpc:
+            # Match the provider name in the URL's hostname, not anywhere in
+            # the string: 'https://evil.example/alchemy' must not pass.
+            from urllib.parse import urlparse
+            rpc_host = (urlparse(self.robinhood_rpc).hostname or '').lower()
+            if self.enable_robinhood and not any(v in rpc_host for v in ('alchemy', 'chainstack', 'quiknode')):
                 raise ValueError('Use a production Robinhood RPC provider, not rate-limited public RPC')
             if self.enable_solana and self.solana_rpc == 'https://api.mainnet-beta.solana.com':
                 raise ValueError('Use a production Solana RPC, not public mainnet RPC')

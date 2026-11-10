@@ -31,8 +31,9 @@ def _retry_after_seconds(raw: str | None, cap: float = 8.0) -> float:
 
 class Api:
     def __init__(self, timeout=12.0):
+        from . import __version__
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=False,
-                                        headers={'User-Agent': 'Launch80/1.0'})
+                                        headers={'User-Agent': f'Launch80/{__version__}'})
 
     async def close(self):
         await self.client.aclose()

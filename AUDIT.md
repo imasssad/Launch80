@@ -131,6 +131,51 @@ reviewer does not have to redo the work.
 
 ---
 
+## Second pass (line-by-line) — further fixes
+
+A full file-by-file re-read after the first round of fixes. Five more issues
+closed, each with a regression test verified to fail against the pre-fix code:
+
+7. **Feed data could rewrite request URLs.** `parse_pool()` regex-validates
+   the token mint but not the pool address, and `pool.pool` is interpolated
+   into a URL path by `PaperExchange._spot`
+   (`/networks/{chain}/pools/{pool.pool}`). A feed row whose pool id contained
+   `/`, `?`, `#` or `%` would redirect the request. Pool addresses are hex or
+   base58, so strictly alphanumeric: anything else is now rejected at parse
+   time (`^[A-Za-z0-9]{1,64}$`).
+
+8. **Live exit could liquidate pre-existing holdings.** `claim()` records the
+   pre-buy token balance, but `exit()` compared the *total* wallet balance
+   against `bought_units`. If the wallet already held the token, a partially
+   missing position still passed the check — and the sell would have burned
+   the pre-existing holding to cover the shortfall. The check is now
+   `balance >= before_token_balance + bought_units`; anything less goes to
+   `RECOVERY_SELL` for manual reconciliation. This also removes the dead
+   `before_token_balance` state flagged in the first pass.
+
+9. **In-flight and unreconciled buys carried zero exposure.** `claim()`
+   inserted `buy_spent_units=0`, so `BUYING` and `RECOVERY_BUY` rows
+   contributed nothing to `exposure_usd()` or `stats` until the fill was
+   journalled. The intended spend is now recorded at claim time and replaced
+   by the actual fill in `open_position()`.
+
+10. **Token-echo gap closed conservatively** (flagged in the first pass).
+    The Robinhood firm quote now rejects before signing when the venue
+    explicitly echoes a `sellToken`/`buyToken` other than the intended pair,
+    and the Solana V2 buy order does the same for `inputMint`/`outputMint`/
+    `inAmount` — matching the validation the V1 sell path already had. The
+    checks are conditional: an absent field keeps the previous behaviour, so
+    no response-schema assumption is baked in. Full schema verification
+    remains a readiness-gate item.
+
+11. **Live RPC provider check matched anywhere in the URL.**
+    `'alchemy' in robinhood_rpc` accepted `https://evil.example/alchemy`. The
+    provider name is now matched against the URL's hostname.
+
+Also: the pytest-asyncio fixture-loop-scope deprecation is pinned to
+`function` in `pyproject.toml`, and the HTTP client User-Agent reports the
+real package version.
+
 ## Known issues NOT fixed (flagged for the readiness gates)
 
 Left alone deliberately: fixing these means guessing at third-party response
@@ -143,25 +188,19 @@ the funded acceptance testing the checklist already requires.
    every token mismatches. With the default `GARP_REQUIRE_LAUNCHPAD=false` this
    only yields `'unverified'`, but with it set to `true` the bot would likely
    reject every candidate. Verify the real response shape before enabling.
-2. **0x responses are not checked for token echo.** `RobinhoodExchange.trade`
-   validates `sellAmount`, the settlement target, the allowance spender and
-   `minBuyAmount`, but not that the quote is for the intended `sellToken` /
-   `buyToken`. The Solana V1 sell path does validate `inputMint`/`outputMint`.
-   Closing this asymmetry needs the authoritative v2 response schema.
-3. **`before_token_balance` is recorded but never used.** `claim()` stores the
-   pre-trade balance; `exit()` compares the *total* wallet balance against
-   `bought_units` without subtracting it. Conservative today (it can only
-   over-estimate holdings), but dead state that invites a wrong future fix.
-4. **In-flight entries contribute zero exposure.** `exposure_usd()` sums
-   `buy_spent_units`, which is `0` for a `BUYING` row until the fill is
-   journalled. Mitigated by the single `_trade_lock` and the `active_count`
-   cap, so only one entry is ever in flight.
-5. **Third-party safety oracle.** `token_safety` for Robinhood trusts
+2. **Third-party safety oracle.** `token_safety` for Robinhood trusts
    `api.swarm0x.sh`. It fails closed, but it is an unvetted single point of
    trust on the entry path — as the README already warns.
-6. **Partial legacy-DB migration.** `Store.__init__` adds only the v1.1
+3. **Partial legacy-DB migration.** `Store.__init__` adds only the v1.1
    underwater columns. A table missing core columns (`buy_spent_units`,
    `attempted_at`, …) is not repaired and will fail at runtime. The mode lock
    already pushes operators toward a fresh database, which is the right path.
-7. **Jupiter V1 sell path** remains a compatibility route on an unmaintained
+4. **Jupiter V1 sell path** remains a compatibility route on an unmaintained
    API, as the author documents. Unchanged.
+5. **Signed transaction contents are not program-level verified.** On both
+   chains the bot signs calldata/transactions built by the aggregator after
+   allowlist, floor and echo checks; proving the on-chain min-output guard is
+   a funded acceptance-test item, not a static one.
+6. **Paper model uses a fixed 100 bps protected-output haircut** rather than
+   the configured `SLIPPAGE_BPS`; it is an explicitly rough simulation, not a
+   fill model.

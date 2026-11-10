@@ -123,14 +123,18 @@ class Store:
                     raise RuntimeError('Legacy database contains untagged positions; never switch modes on this DB')
                 self.set_flag('trading_mode',mode)
 
-    def claim(self, pool: Pool, before_balance: int) -> bool:
+    def claim(self, pool: Pool, before_balance: int, intended_spend_units: int = 0) -> bool:
+        # Record the intended spend immediately so BUYING/RECOVERY_BUY rows
+        # count toward exposure_usd() while the fill is in flight or unknown;
+        # open_position() replaces it with the actual filled amount.
         with self.lock:
             cur = self.db.execute('''INSERT OR IGNORE INTO positions(
                 key,chain,pool,mint,symbol,dex,liquidity_usd,created_at,
-                status,attempted_at,before_token_balance)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
+                status,attempted_at,before_token_balance,buy_spent_units)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (pool.key,pool.chain,pool.pool,pool.mint,pool.symbol,pool.dex,
-                 str(pool.liquidity_usd), pool.created_at,'BUYING',time.time(),str(before_balance)))
+                 str(pool.liquidity_usd), pool.created_at,'BUYING',time.time(),
+                 str(before_balance),int(intended_spend_units)))
             return cur.rowcount == 1
 
     def open_position(self, key, spent: int, received: int, txid: str, hold_seconds: int, buy_at=None, gas_units=0):

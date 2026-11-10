@@ -23,8 +23,10 @@ new purchases additionally require `LIVE_BUY_ACK=I_ENABLE_REAL_PURCHASES` and th
       matches `SOLANA_MAINNET_GENESIS_HASH` in `launch80/config.py`. The imported code shipped the
       32-character CAIP-2 chain id here instead of the full 44-character hash, which made the
       mainnet guard unsatisfiable; see `AUDIT.md`. Never shorten this value to silence a mismatch.
-- [ ] Confirm the Garp `chainId` comparison and the 0x quote token-echo gap in `AUDIT.md`
-      ("Known issues NOT fixed") before enabling `GARP_REQUIRE_LAUNCHPAD` or scaling 0x size.
+- [ ] Confirm the Garp `chainId` comparison in `AUDIT.md` ("Known issues NOT fixed") before
+      enabling `GARP_REQUIRE_LAUNCHPAD`. Token-pair echo on 0x/Jupiter execution quotes is now
+      rejected when mismatched, but only when the venue sends the fields: verify the live
+      response schemas actually include them before relying on that check.
 - [ ] Revalidate Jupiter's legacy Metis V1 sell path, min-output instruction and request format;
       upgrade to maintained V2 `/build` if appropriate before meaningful funds are used.
 - [ ] Confirm that buy/sell balances, quote token units, taxes and gas are accurately reconciled.

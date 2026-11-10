@@ -22,6 +22,10 @@ MINT_EXCLUDE = {
 }
 EVM_RE = re.compile(r'^0x[a-fA-F0-9]{40}$')
 SOL_RE = re.compile(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$')
+# Pool addresses are hex or base58, so strictly alphanumeric. The address is
+# later interpolated into URL paths (paper spot lookups), so reject anything
+# that could rewrite the request path or query ('/', '?', '#', '..', '%').
+POOL_ADDR_RE = re.compile(r'^[A-Za-z0-9]{1,64}$')
 
 
 def parse_pool(raw: dict, included: dict, chain: str) -> Pool | None:
@@ -49,7 +53,7 @@ def parse_pool(raw: dict, included: dict, chain: str) -> Pool | None:
         if chain == 'solana' and not SOL_RE.fullmatch(base):
             return None
         pool_address = att.get('address') or raw['id'].split('_', 1)[-1]
-        if not pool_address:
+        if not pool_address or not POOL_ADDR_RE.fullmatch(str(pool_address)):
             return None
         dex = (rel.get('dex', {}).get('data') or {}).get('id', 'unknown')
         t = included.get(br, {}).get('attributes', {})

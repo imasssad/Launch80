@@ -141,7 +141,7 @@ launch80 resume
 - **0x** uses a verified allowed transaction target and exact allowances, but only on-chain receipts and a security review can establish correct output, calldata, nonce/fee handling and approvals for a particular live token.
 - **Jupiter V1 sell path** was chosen for its explicit output threshold and is not actively maintained; its program-level slippage assertion needs live acceptance verification before nontrivial deployment.
 - **New liquidity pool detection** is poll-based and the $5K liquidity figure does not guarantee usable exit liquidity. Garp and external token-risk scans are informative only and may be delayed or unavailable.
-- **Unverified third-party response shapes.** `GARP_REQUIRE_LAUNCHPAD=true` compares Garp's `chainId` against the GeckoTerminal network slug and may therefore reject every candidate; confirm the real response before enabling it. The 0x path validates the settlement target, allowance spender, `sellAmount` and `minBuyAmount`, but does not verify that the quote echoes the intended `sellToken`/`buyToken`. See `AUDIT.md`.
+- **Unverified third-party response shapes.** `GARP_REQUIRE_LAUNCHPAD=true` compares Garp's `chainId` against the GeckoTerminal network slug and may therefore reject every candidate; confirm the real response before enabling it. Execution quotes now reject a mismatched token-pair echo on both chains, but only when the venue sends those fields — verify the live schemas include them. See `AUDIT.md`.
 - Fees and priority costs on **failed swaps** are borne even if the protected transaction reverts. Gas is deliberately excluded from realized PnL. Hot-wallet custody and infrastructure failures are outside this bot's protection.
 
 ## Project files

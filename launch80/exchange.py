@@ -269,6 +269,14 @@ class RobinhoodExchange(Exchange):
                         raise RiskRejection('0x firm quote became unprofitable after approval')
             if issues.get('allowance') or issues.get('balance') or issues.get('simulationIncomplete'):
                 raise RiskRejection('0x firm quote not clear after approvals')
+            # Token echo: when the venue names the pair it is quoting, it must
+            # be the intended one. Absent fields keep the previous behaviour;
+            # a present-but-different token is never signed.
+            echo_sell, echo_buy = firm.get('sellToken'), firm.get('buyToken')
+            if echo_sell is not None and str(echo_sell).lower() != src.lower():
+                raise RiskRejection('0x firm quote sellToken does not match intent')
+            if echo_buy is not None and str(echo_buy).lower() != dst.lower():
+                raise RiskRejection('0x firm quote buyToken does not match intent')
             trans = firm.get('transaction') or {}
             target = str(trans.get('to') or '').lower()
             if target not in self.allowed_targets:
@@ -462,6 +470,15 @@ class SolanaExchange(Exchange):
             order = await self._order(pool,side,amount,True)
             if order.get('errorCode') or not order.get('transaction') or not order.get('requestId'):
                 raise TradingError('Jupiter executable order unavailable')
+            # Mint/amount echo before signing (the V1 sell path already does
+            # this); only a present-but-different value rejects.
+            src,dst = self._assets(pool,side)
+            if order.get('inputMint') is not None and str(order['inputMint']) != src:
+                raise RiskRejection('Jupiter order input mint does not match intent')
+            if order.get('outputMint') is not None and str(order['outputMint']) != dst:
+                raise RiskRejection('Jupiter order output mint does not match intent')
+            if order.get('inAmount') is not None and str(order['inAmount']) != str(amount):
+                raise RiskRejection('Jupiter order input amount does not match intent')
             signed = self._sign_transaction(order['transaction'],self.signer)
             try:
                 result = await self.api.post('https://api.jup.ag/swap/v2/execute',
