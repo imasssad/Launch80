@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Launch80 Status</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16191d; --muted: #646b75;
+    --line: #e3e6ea; --ok: #1a7f46; --okbg: #e7f5ed;
+    --warn: #8a6100; --warnbg: #fdf3dc; --bad: #a3242b; --badbg: #fbeaea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101316; --card: #171b20; --text: #e8eaed; --muted: #9aa2ad;
+      --line: #2a3038; --ok: #58d08a; --okbg: #15291f;
+      --warn: #e3b341; --warnbg: #2a2314; --bad: #f08a8a; --badbg: #2d1718;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101316; --card: #171b20; --text: #e8eaed; --muted: #9aa2ad;
+    --line: #2a3038; --ok: #58d08a; --okbg: #15291f;
+    --warn: #e3b341; --warnbg: #2a2314; --bad: #f08a8a; --badbg: #2d1718;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); min-height: 100vh;
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+  }
+  .wrap { width: 100%; max-width: 440px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 22px; box-shadow: 0 1px 3px rgba(0,0,0,.05);
+  }
+  h1 { margin: 0 0 2px; font-size: 19px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .state {
+    display: flex; align-items: center; gap: 10px; padding: 13px 15px;
+    border-radius: 10px; font-weight: 600; margin-bottom: 18px;
+  }
+  .state.ok   { background: var(--okbg);   color: var(--ok); }
+  .state.warn { background: var(--warnbg); color: var(--warn); }
+  .state.bad  { background: var(--badbg);  color: var(--bad); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
+  .state.ok .dot { animation: pulse 2.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  @media (prefers-reduced-motion: reduce) { .state.ok .dot { animation: none } }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 9px 16px; }
+  dt { color: var(--muted); font-size: 13px; }
+  dd { margin: 0; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .tag {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; border: 1px solid var(--line);
+  }
+  .tag.paper { background: var(--okbg); color: var(--ok); border-color: transparent; }
+  .tag.live  { background: var(--badbg); color: var(--bad); border-color: transparent; }
+  footer { margin-top: 16px; color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Launch80</h1>
+    <div class="sub">Launch-pool trading bot &middot; status monitor</div>
+    <div id="state" class="state warn"><span class="dot"></span><span id="stateText">Checking…</span></div>
+    <dl id="detail"></dl>
+  </div>
+  <footer id="foot">Auto-refreshing every 30s</footer>
+</div>
+<script>
+  const esc = s => String(s).replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+
+  function render(d) {
+    const state = document.getElementById('state');
+    const text  = document.getElementById('stateText');
+    const live  = d.mode === 'live';
+    let cls = 'ok', msg = live ? 'Running — LIVE' : 'Running — paper mode';
+    if (d.unreconciled) { cls = 'bad';  msg = 'Needs attention — unreconciled trade'; }
+    else if (d.paused)  { cls = 'warn'; msg = 'Running — new buys paused'; }
+    state.className = 'state ' + cls;
+    text.textContent = msg;
+
+    const rows = [
+      ['Mode', `<span class="tag ${live ? 'live' : 'paper'}">${esc(d.mode || '?')}</span>`],
+      ['New buys', d.paused ? 'paused' : 'enabled'],
+      ['Exit policy', esc(d.exit_policy || '—').replace(/_/g, ' ')],
+      ['Earliest exit', (d.earliest_exit_seconds ?? '—') + 's'],
+      ['Unreconciled', d.unreconciled ? 'yes' : 'no'],
+    ];
+    document.getElementById('detail').innerHTML =
+      rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
+  }
+
+  function down(reason) {
+    const state = document.getElementById('state');
+    state.className = 'state bad';
+    document.getElementById('stateText').textContent = 'Offline — ' + reason;
+    document.getElementById('detail').innerHTML =
+      '<dt>Service</dt><dd>not responding</dd>';
+  }
+
+  async function tick() {
+    try {
+      const r = await fetch('health.php', { cache: 'no-store' });
+      if (!r.ok) return down('HTTP ' + r.status);
+      render(await r.json());
+    } catch (e) {
+      down('unreachable');
+    }
+    document.getElementById('foot').textContent =
+      'Updated ' + new Date().toLocaleTimeString() + ' · refreshes every 30s';
+  }
+
+  tick();
+  setInterval(tick, 30000);
+</script>
+</body>
+</html>
