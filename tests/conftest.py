@@ -1,9 +1,28 @@
+from pathlib import Path
 from decimal import Decimal
 import time
 import pytest
 from launch80.config import Settings
 from launch80.models import Fill, Pool, Quote, UncertainExecution, TradingError
 from launch80.storage import Store
+
+@pytest.fixture(autouse=True)
+def hermetic_env(monkeypatch):
+    """Tests must never inherit a deployment's .env.
+
+    launch80.config calls load_dotenv() at import, which populates os.environ
+    from whatever .env is nearest the working directory. Running the suite on
+    a production host therefore pulled in the live trading config: an ambient
+    MIN_LIQUIDITY_USD=25000 silently failed every test whose fixture pool has
+    $5k liquidity. Clear each setting config.py reads so fixtures start from
+    documented defaults, then set only what they mean to.
+    """
+    import re
+    import launch80.config as config_module
+    source = Path(config_module.__file__).read_text()
+    for name in set(re.findall(r"""['"]([A-Z][A-Z0-9_]{2,})['"]""", source)):
+        monkeypatch.delenv(name, raising=False)
+
 
 @pytest.fixture
 def cfg(monkeypatch,tmp_path):
