@@ -224,14 +224,17 @@ def test_dashboard_shell_is_public_but_carries_no_data(secured, pool):
     before = client.get('/')
     assert before.status_code == 200
     assert 'text/html' in before.headers['content-type']
-    assert 'Operator sign-in' in before.text
+    assert 'OPERATOR ACCESS' in before.text and 'Sign in' in before.text
     assert 'no-store' in before.headers['cache-control']
 
-    store.claim(pool, 0, intended_spend_units=5_000_000)
-    store.open_position(pool.key, 5_000_000, 123, 'PAPER-secret-txid', 80)
+    # A distinctive symbol: a short one like 'NEW' collides with UI copy and
+    # would fail for the wrong reason.
+    seeded = replace(pool, symbol='ZQXUNIQUESYMBOL')
+    store.claim(seeded, 0, intended_spend_units=5_000_000)
+    store.open_position(seeded.key, 5_000_000, 123, 'PAPER-secret-txid', 80)
     after = client.get('/')
     assert after.text == before.text, 'shell must not vary with journal contents'
-    for secret in ('PAPER-secret-txid', pool.mint, pool.symbol):
+    for secret in ('PAPER-secret-txid', seeded.mint, seeded.symbol):
         assert secret not in after.text
 
 
@@ -284,3 +287,19 @@ def test_forwarded_ip_ignored_from_remote_peer():
 def test_client_ip_without_forwarded_header():
     from launch80.auth import client_ip
     assert client_ip(_req('198.51.100.7')) == '198.51.100.7'
+
+
+def test_login_page_offers_a_password_reveal_toggle(secured):
+    """Operators mistype generated passwords; they must be able to check."""
+    client, _, _ = secured
+    body = client.get('/').text
+    assert 'id="pwToggle"' in body
+    assert 'aria-pressed' in body and 'aria-label="Show password"' in body
+
+
+def test_dashboard_uses_the_shared_design_tokens(secured):
+    """UI language is shared with volt.everset: same palette variables."""
+    client, _, _ = secured
+    body = client.get('/').text
+    for token in ('--lime:#c1f77d', '--teal:#42e1c4', '--red:#fd807a', '--bg:#090f13'):
+        assert token in body, f'missing shared design token {token}'

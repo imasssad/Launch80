@@ -6,126 +6,310 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Launch80</title>
 <style>
-  :root{--bg:#f6f7f9;--card:#fff;--text:#16191d;--muted:#646b75;--line:#e3e6ea;
-    --ok:#1a7f46;--okbg:#e7f5ed;--warn:#8a6100;--warnbg:#fdf3dc;--bad:#a3242b;--badbg:#fbeaea;
-    --accent:#2f6feb}
-  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
-    --bg:#101316;--card:#171b20;--text:#e8eaed;--muted:#9aa2ad;--line:#2a3038;
-    --ok:#58d08a;--okbg:#15291f;--warn:#e3b341;--warnbg:#2a2314;--bad:#f08a8a;--badbg:#2d1718;
-    --accent:#6ea0ff}}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);padding:20px 16px;
-    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-  .wrap{max-width:1020px;margin:0 auto}
-  header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:16px}
-  h1{margin:0;font-size:20px;letter-spacing:-.01em}
-  .muted{color:var(--muted);font-size:13px}
-  .spacer{flex:1}
-  button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--line);
-    background:var(--card);color:var(--text);cursor:pointer}
-  button:hover{border-color:var(--accent)}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-  button:disabled{opacity:.5;cursor:not-allowed}
-  input{font:inherit;padding:9px 11px;border-radius:8px;border:1px solid var(--line);
-    background:var(--bg);color:var(--text);width:100%}
-  .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
-  .tag.paper{background:var(--okbg);color:var(--ok)} .tag.live{background:var(--badbg);color:var(--bad)}
-  .state{display:flex;align-items:center;gap:9px;padding:12px 14px;border-radius:10px;
-    font-weight:600;margin-bottom:16px}
-  .state.ok{background:var(--okbg);color:var(--ok)} .state.warn{background:var(--warnbg);color:var(--warn)}
-  .state.bad{background:var(--badbg);color:var(--bad)}
-  .dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-  .k{color:var(--muted);font-size:12px;margin-bottom:3px}
-  .v{font-size:19px;font-weight:650;font-variant-numeric:tabular-nums}
-  .v.pos{color:var(--ok)} .v.neg{color:var(--bad)}
-  h2{font-size:13px;margin:20px 0 8px;color:var(--muted);font-weight:600;
-    text-transform:uppercase;letter-spacing:.04em}
-  .scroll{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{padding:9px 12px;text-align:left;white-space:nowrap}
-  th{color:var(--muted);font-weight:600;font-size:12px;border-bottom:1px solid var(--line)}
-  tr+tr td{border-top:1px solid var(--line)}
-  td.num{text-align:right;font-variant-numeric:tabular-nums}
-  .pill{padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;background:var(--line)}
-  .pill.OPEN{background:var(--warnbg);color:var(--warn)}
-  .pill.CLOSED{background:var(--okbg);color:var(--ok)}
-  .pill.ABANDONED,.pill.RECOVERY_BUY,.pill.RECOVERY_SELL,.pill.MANUAL_EXIT{background:var(--badbg);color:var(--bad)}
-  .empty{padding:16px;color:var(--muted);font-size:13px}
-  .login{max-width:340px;margin:12vh auto;background:var(--card);border:1px solid var(--line);
-    border-radius:14px;padding:24px}
-  .login h1{margin-bottom:4px} .field{margin:14px 0}
-  .err{color:var(--bad);font-size:13px;min-height:19px;margin-top:8px}
-  footer{margin-top:18px;color:var(--muted);font-size:12px;text-align:center}
-  .hidden{display:none}
+/* Design language shared with volt.everset: dark shell, lime accent,
+   teal/red for signed values, tabular numerals throughout. Self-contained -
+   no external fonts or scripts, because the app's CSP allows neither. */
+:root{--bg:#090f13;--side:#0b1216;--panel:#111a20;--panel2:#141f26;--stroke:#263239;
+  --stroke2:#1e2b32;--text:#eff5f0;--muted:#819199;--muted2:#53636b;
+  --lime:#c1f77d;--lime-dark:#95cb4f;--teal:#42e1c4;--red:#fd807a;--orange:#ffc36b;--blue:#94afff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+*{box-sizing:border-box}
+html{min-height:100%;background:var(--bg)}
+body{margin:0;color:var(--text);font-family:var(--font);-webkit-font-smoothing:antialiased}
+button,input{font:inherit}button{cursor:pointer}
+button:disabled{opacity:.38;cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+.hidden{display:none!important}
+.positive{color:var(--teal)!important}.negative{color:var(--red)!important}
+.warn{color:var(--orange)!important}.muted{color:var(--muted)!important}
+
+/* ---- sign-in ---- */
+.auth-backdrop{position:fixed;inset:0;z-index:40;display:flex;align-items:center;
+  justify-content:center;padding:20px;background:radial-gradient(circle at 70% 0%,#243b25,#080f13 55%)}
+.auth-card{width:min(430px,100%);background:#141f23;border:1px solid #3b5040;border-radius:17px;
+  padding:39px;box-shadow:0 18px 70px #0007}
+.wordmark{font-size:19px;font-weight:900;letter-spacing:2px;margin-bottom:36px}
+.wordmark span{color:var(--lime);font-size:10px;letter-spacing:2px;display:block;margin-top:3px}
+.auth-eyebrow{font-size:10px;letter-spacing:1.8px;color:var(--lime);font-weight:800}
+.auth-card h1{font-size:29px;letter-spacing:-.8px;margin:12px 0}
+.auth-card>p{font-size:12px;color:#95a9a4;line-height:1.7;margin-bottom:27px}
+.auth-card label{font-size:11px;color:#cfddd5;display:block;margin-bottom:9px}
+.auth-card input{width:100%;padding:14px;background:#0c1519;color:#fff;
+  border:1px solid #39494b;border-radius:9px}
+.pw-wrap{position:relative;margin-bottom:14px}
+.pw-wrap input{padding-right:62px;margin:0}
+.pw-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;
+  border:0;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.8px;
+  padding:9px 10px;border-radius:7px}
+.pw-toggle:hover{color:var(--lime);background:#1a2a26}
+.auth-error{min-height:16px;color:var(--red);font-size:11px;margin-top:12px}
+.auth-foot{margin-top:24px;display:flex;align-items:center;gap:9px;font-size:9px;color:#758f84}
+.secure-dot{width:7px;height:7px;background:var(--lime);border-radius:50%}
+
+/* ---- buttons ---- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:11px 15px;
+  font-size:11px;font-weight:800;border-radius:8px;border:1px solid var(--stroke);
+  background:#172229;color:#e0e8e2;white-space:nowrap;transition:background .15s,transform .15s}
+.btn:hover:not(:disabled){background:#22323a;transform:translateY(-1px)}
+.btn-primary{background:var(--lime);color:#0a160c;border-color:var(--lime)}
+.btn-primary:hover:not(:disabled){background:#d4ff99}
+.btn-outline{border-color:#426349;background:rgba(22,41,30,.52);color:var(--lime)}
+.btn-outline:hover:not(:disabled){background:#263f2f}
+.btn-danger{background:#2d1d1d;color:#ff9891;border-color:#6c3030}
+.btn-danger:hover:not(:disabled){background:#442424}
+.btn-full{width:100%}.btn-sm{padding:8px 11px;font-size:10px}
+
+/* ---- shell ---- */
+.topbar{height:67px;border-bottom:1px solid var(--stroke2);display:flex;justify-content:space-between;
+  align-items:center;padding:0 28px;background:#0d151a;position:sticky;top:0;z-index:4;gap:14px}
+.brand{font-size:13px;font-weight:900;letter-spacing:1.8px}
+.brand b{color:var(--lime)}
+.topbar-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.utc-clock{font-size:10px;color:#94a4a5;font-weight:650;font-variant-numeric:tabular-nums}
+.mode-badge{font-size:9px;letter-spacing:1px;font-weight:850;color:#c8e6ff;background:#182833;
+  border:1px solid #2e4b64;padding:8px 11px;border-radius:7px}
+.mode-badge.live{background:#392520;border-color:#694334;color:#ffaf80}
+.content{width:100%;max-width:1400px;padding:28px 28px 52px;margin:0 auto}
+.eyebrow{font-size:10px;font-weight:850;letter-spacing:2px;color:var(--lime);
+  display:flex;align-items:center;gap:9px}
+.eyebrow:before{content:'';width:16px;height:2px;background:var(--lime)}
+
+/* ---- status banner ---- */
+.hero{border:1px solid #30493b;border-radius:15px;padding:22px 25px;margin-top:14px;
+  background:radial-gradient(ellipse at 90% 12%,rgba(94,152,65,.16),transparent 42%),
+    linear-gradient(120deg,#1b2b24,#111b1e 71%);
+  display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}
+.hero.is-warn{border-color:#5c4a2a;background:linear-gradient(120deg,#2b2518,#1d1a13 71%)}
+.hero.is-bad{border-color:#6c3335;background:linear-gradient(120deg,#2d1d1d,#1e1517 71%)}
+.hero h2{font-size:22px;margin:9px 0 0;letter-spacing:-.7px;font-weight:760}
+.hero-state{display:inline-flex;gap:8px;align-items:center;margin-top:10px;font-size:11px;color:#b6cfb4}
+.state-dot{width:7px;height:7px;background:var(--lime);border-radius:50%}
+.state-dot.off{background:#7e949b}.state-dot.danger{background:var(--red)}
+.state-dot.warn{background:var(--orange)}
+.hero-actions{display:flex;gap:10px;flex-wrap:wrap}
+
+/* ---- stats ---- */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:16px}
+.stat{border:1px solid var(--stroke);border-radius:12px;background:var(--panel);padding:18px 19px}
+.stat-label{font-size:9px;color:#92a1a2;letter-spacing:1.3px;font-weight:800}
+.stat-value{font-size:28px;font-weight:790;letter-spacing:-1.2px;margin:12px 0 5px;
+  line-height:1.05;font-variant-numeric:tabular-nums}
+.stat-foot{font-size:10px;color:#788c8c}
+
+/* ---- panels & table ---- */
+.panel{background:var(--panel);border:1px solid var(--stroke);border-radius:12px;
+  min-width:0;overflow:hidden;margin-top:17px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:19px 21px 14px}
+.panel-heading{font-size:14px;font-weight:760;margin:0}
+.panel-sub{font-size:10px;color:#7e9293;margin:6px 0 0}
+.table-scroll{overflow-x:auto}
+.market-table{border-collapse:collapse;width:100%;min-width:780px}
+.market-table th{font-size:9px;text-align:right;padding:13px 15px;background:#142027;
+  color:#7b9096;letter-spacing:.5px;white-space:nowrap;font-weight:800}
+.market-table th:first-child,.market-table th:nth-child(2){text-align:left}
+.market-table td{padding:12px 15px;border-top:1px solid #223037;font-size:11px;
+  text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.market-table td:first-child,.market-table td:nth-child(2){text-align:left}
+.market-table tbody tr:hover{background:#1b2b30}
+.market-sym{font-size:11px;font-weight:800}
+.note-cell{max-width:260px;overflow:hidden;text-overflow:ellipsis;color:#7d9296}
+.status-pill{font-size:9px;font-weight:800;display:inline-flex;padding:5px 8px;
+  border-radius:6px;letter-spacing:.45px;border:1px solid transparent}
+.status-pill.CLOSED{background:#1d3a2e;color:var(--lime);border-color:#2e5a3c}
+.status-pill.OPEN{background:#383024;color:#f4cb83;border-color:#53442a}
+.status-pill.FAILED_BUY{background:#263038;color:#93a5ac;border-color:#394954}
+.status-pill.ABANDONED,.status-pill.RECOVERY_BUY,.status-pill.RECOVERY_SELL,
+.status-pill.MANUAL_EXIT{background:#432627;color:var(--red);border-color:#6c3335}
+
+/* ---- event log ---- */
+.log{padding:0 21px 14px}
+.log-item{display:flex;align-items:flex-start;gap:13px;padding:14px 0;border-bottom:1px solid var(--stroke2)}
+.log-item:last-child{border-bottom:0}
+.log-line{width:27px;height:27px;display:grid;place-items:center;background:#22312f;
+  color:var(--lime);border-radius:8px;flex:none;font-size:12px;font-weight:800}
+.log-line.WARN{color:var(--orange);background:#383022}
+.log-line.CRITICAL{color:var(--red);background:#402625}
+.log-line.INFO{color:var(--blue);background:#243344}
+.log-body{min-width:0;flex:1}
+.log-top{display:flex;justify-content:space-between;gap:15px;align-items:center}
+.log-top strong{font-size:10px;letter-spacing:1.1px;color:#b7c9bf}
+.log-top time{font-size:10px;color:#70868c;white-space:nowrap;font-variant-numeric:tabular-nums}
+.log-body p{font-size:11px;color:#9cacae;line-height:1.6;margin:5px 0 0;word-break:break-word}
+.empty{padding:40px 26px;text-align:center;color:#81979a;font-size:11px}
+.footer{padding:17px 28px 22px;border-top:1px solid #1c292f;color:#53666a;
+  display:flex;justify-content:space-between;gap:16px;font-size:9px;letter-spacing:.7px;flex-wrap:wrap}
+
+/* ---- toasts ---- */
+.toast-container{position:fixed;bottom:22px;right:22px;z-index:30;display:flex;flex-direction:column;gap:9px}
+.toast{width:min(380px,calc(100vw - 44px));background:#1b3029;border:1px solid #3a6850;
+  color:#d1f2d8;padding:13px 16px;border-radius:9px;box-shadow:0 7px 35px #0009;font-size:11px;line-height:1.6}
+.toast.err{background:#382523;border-color:#754239;color:#ffd4c9}
+.toast strong{display:block;margin-bottom:2px;font-size:12px}
+
+@media(max-width:1050px){.stats{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:760px){
+  .topbar{height:auto;padding:12px 16px;flex-wrap:wrap}
+  .content{padding:20px 14px 40px}
+  .hero h2{font-size:19px}.stat-value{font-size:24px}
+  .auth-card{padding:28px}
+  .footer{flex-direction:column}
+}
+@media(max-width:460px){.stats{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 
-<div id="loginView" class="hidden">
-  <form class="login" id="loginForm">
-    <h1>Launch80</h1>
-    <div class="muted">Operator sign-in</div>
-    <div class="field"><input id="pw" type="password" placeholder="Password" autocomplete="current-password" required></div>
-    <div class="field hidden" id="otpField"><input id="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code"></div>
-    <button class="primary" type="submit" style="width:100%">Sign in</button>
-    <div class="err" id="loginErr"></div>
+<!-- ===================== sign-in ===================== -->
+<div id="loginView" class="auth-backdrop hidden">
+  <form class="auth-card" id="loginForm">
+    <div class="wordmark">LAUNCH<b style="color:var(--lime)">80</b><span>POOL TRADING AGENT</span></div>
+    <div class="auth-eyebrow">OPERATOR ACCESS</div>
+    <h1>Sign in</h1>
+    <p>This console shows live position data and trading controls. Sessions expire after 8 hours, or 2 hours idle.</p>
+
+    <label for="pw">Password</label>
+    <div class="pw-wrap">
+      <input id="pw" type="password" autocomplete="current-password" required>
+      <button type="button" class="pw-toggle" id="pwToggle" aria-pressed="false"
+              aria-label="Show password">SHOW</button>
+    </div>
+
+    <div id="otpField" class="hidden">
+      <label for="otp">Authenticator code</label>
+      <input id="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+             autocomplete="one-time-code" placeholder="000000">
+    </div>
+
+    <button class="btn btn-primary btn-full" type="submit" id="loginBtn">Sign in</button>
+    <div class="auth-error" id="loginErr" role="alert"></div>
+    <div class="auth-foot"><span class="secure-dot"></span>
+      <span>Session cookie is HttpOnly and SameSite=Strict</span></div>
   </form>
 </div>
 
-<div id="appView" class="wrap hidden">
-  <header>
-    <h1>Launch80</h1><span id="modeTag"></span>
-    <span class="spacer"></span>
-    <button id="pauseBtn">Pause buys</button>
-    <button id="resumeBtn">Resume</button>
-    <button id="logoutBtn">Sign out</button>
-  </header>
-  <div id="state" class="state warn"><span class="dot"></span><span id="stateText">Loading…</span></div>
-  <div class="grid" id="cards"></div>
-  <h2>Positions</h2><div class="scroll" id="posWrap"></div>
-  <h2>Recent events</h2><div class="scroll" id="evWrap"></div>
-  <footer id="foot"></footer>
+<!-- ===================== dashboard ===================== -->
+<div id="appView" class="hidden">
+  <div class="topbar">
+    <div class="brand">LAUNCH<b>80</b></div>
+    <div class="topbar-right">
+      <span class="utc-clock" id="clock"></span>
+      <span class="mode-badge" id="modeBadge">—</span>
+      <button class="btn btn-sm btn-outline" id="pauseBtn">Pause buys</button>
+      <button class="btn btn-sm btn-outline" id="resumeBtn">Resume</button>
+      <button class="btn btn-sm" id="logoutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="eyebrow">OPERATIONS</div>
+
+    <div class="hero" id="hero">
+      <div>
+        <h2 id="heroTitle">Loading…</h2>
+        <div class="hero-state"><span class="state-dot" id="heroDot"></span>
+          <span id="heroSub">—</span></div>
+      </div>
+      <div class="hero-actions">
+        <span class="stat-label" id="heroPolicy"></span>
+      </div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div><h3 class="panel-heading">Positions</h3>
+          <p class="panel-sub" id="posSub">—</p></div>
+      </div>
+      <div class="table-scroll" id="posWrap"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div><h3 class="panel-heading">Activity</h3>
+          <p class="panel-sub">Most recent engine and operator events</p></div>
+      </div>
+      <div id="evWrap"></div>
+    </div>
+
+    <div class="footer">
+      <span id="foot">—</span>
+      <span>Paper results are not evidence of profitability · gas excluded from PnL</span>
+    </div>
+  </div>
 </div>
+
+<div class="toast-container" id="toasts"></div>
 
 <script>
 'use strict';
-let CSRF = null, authDisabled = false, timer = null;
+let CSRF = null, timer = null, clockTimer = null;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const usd = u => (Number(u) / 1e6).toFixed(6);
+const units = u => (Number(u) / 1e6).toFixed(6);
+
+function toast(msg, isErr) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (isErr ? ' err' : '');
+  el.innerHTML = `<strong>${esc(isErr ? 'Failed' : 'Done')}</strong>${esc(msg)}`;
+  $('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+
+/* ---- show / hide password ---- */
+$('pwToggle').addEventListener('click', () => {
+  const field = $('pw'), btn = $('pwToggle');
+  const reveal = field.type === 'password';
+  field.type = reveal ? 'text' : 'password';
+  btn.textContent = reveal ? 'HIDE' : 'SHOW';
+  btn.setAttribute('aria-pressed', String(reveal));
+  btn.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+  field.focus();
+});
 
 async function api(path, opts = {}) {
   const o = Object.assign({ cache: 'no-store', headers: {} }, opts);
   if (o.method === 'POST' && CSRF) o.headers['X-CSRF-Token'] = CSRF;
   const r = await fetch(path, o);
   if (r.status === 401) { show('login'); throw new Error('unauthenticated'); }
-  if (!r.ok) throw new Error('HTTP ' + r.status);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail || ('HTTP ' + r.status));
+  }
   return r.json();
 }
 
 function show(which) {
   $('loginView').classList.toggle('hidden', which !== 'login');
   $('appView').classList.toggle('hidden', which !== 'app');
-  if (which === 'login' && timer) { clearInterval(timer); timer = null; }
+  if (which === 'login') {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+  }
+}
+
+function startApp() {
+  show('app');
+  refresh();
+  timer = setInterval(refresh, 20000);
+  const tick = () => { $('clock').textContent = new Date().toISOString().slice(11, 19) + ' UTC'; };
+  tick(); clockTimer = setInterval(tick, 1000);
 }
 
 async function boot() {
   try {
     const s = await (await fetch('/api/auth/session', { cache: 'no-store' })).json();
-    authDisabled = !!s.auth_disabled;
     CSRF = s.csrf;
     $('otpField').classList.toggle('hidden', !s.totp_required);
-    if (s.authenticated) { show('app'); refresh(); timer = setInterval(refresh, 20000); }
-    else show('login');
+    s.authenticated ? startApp() : show('login');
   } catch { show('login'); }
 }
 
 $('loginForm').addEventListener('submit', async ev => {
   ev.preventDefault();
   $('loginErr').textContent = '';
+  $('loginBtn').disabled = true;
   try {
     const r = await fetch('/api/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -133,20 +317,35 @@ $('loginForm').addEventListener('submit', async ev => {
     });
     const body = await r.json().catch(() => ({}));
     if (!r.ok) { $('loginErr').textContent = body.detail || ('Sign-in failed (' + r.status + ')'); return; }
-    CSRF = body.csrf; $('pw').value = ''; $('otp').value = '';
-    show('app'); refresh(); timer = setInterval(refresh, 20000);
+    CSRF = body.csrf;
+    $('pw').value = ''; $('otp').value = '';
+    $('pw').type = 'password'; $('pwToggle').textContent = 'SHOW';
+    startApp();
   } catch { $('loginErr').textContent = 'Network error'; }
+  finally { $('loginBtn').disabled = false; }
 });
 
 $('logoutBtn').onclick = async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
   CSRF = null; show('login');
 };
-$('pauseBtn').onclick  = async () => { try { await api('/pause',  { method: 'POST' }); refresh(); } catch {} };
-$('resumeBtn').onclick = async () => {
-  try { await api('/resume', { method: 'POST' }); refresh(); }
-  catch (e) { alert('Resume refused — usually an unreconciled trade.'); }
+$('pauseBtn').onclick = async () => {
+  try { await api('/pause', { method: 'POST' }); toast('New buys paused.'); refresh(); }
+  catch (e) { toast(e.message, true); }
 };
+$('resumeBtn').onclick = async () => {
+  try { await api('/resume', { method: 'POST' }); toast('New buys resumed.'); refresh(); }
+  catch (e) { toast(e.message, true); }
+};
+
+const SEVERITY = { AUDIT: 'INFO', ENGINE_START: 'INFO', ENGINE_STOP: 'INFO',
+  BUY_CONFIRMED: '', SELL_CONFIRMED: '', OPERATOR_RESUME: 'INFO', OPERATOR_PAUSE: 'WARN',
+  FEED_ERROR: 'WARN', SELL_QUOTE_RETRY: 'WARN', SELL_RETRY: 'WARN', HOLD_UNDERWATER: 'WARN',
+  ENTRY_SKIPPED: 'INFO', GARP_SOURCE: 'INFO', ENTRY_ERROR: 'WARN', BUY_FAILED: 'WARN',
+  FEED_CIRCUIT_BREAKER: 'CRITICAL', UNDERWATER_RISK_PAUSE: 'CRITICAL',
+  UNDERWATER_LONG_HOLD: 'CRITICAL', SELL_UNCERTAIN: 'CRITICAL', BUY_UNCERTAIN: 'CRITICAL',
+  MANUAL_EXIT: 'CRITICAL', RECOVERY_HALT: 'CRITICAL', OPERATOR_ABANDON: 'CRITICAL',
+  AUTH_FAILED: 'CRITICAL' };
 
 async function refresh() {
   let health, stats, positions, events;
@@ -156,48 +355,83 @@ async function refresh() {
   } catch { return; }
 
   const live = health.mode === 'live';
-  $('modeTag').innerHTML = `<span class="tag ${live ? 'live' : 'paper'}">${esc(health.mode)}</span>`;
-  let cls = 'ok', msg = live ? 'Running — LIVE MODE' : 'Running — paper mode';
-  if (health.unreconciled) { cls = 'bad'; msg = 'Needs attention — unreconciled trade'; }
-  else if (health.paused)  { cls = 'warn'; msg = 'Running — new buys paused'; }
-  $('state').className = 'state ' + cls;
-  $('stateText').textContent = msg;
+  const badge = $('modeBadge');
+  badge.textContent = live ? 'LIVE' : 'PAPER';
+  badge.className = 'mode-badge' + (live ? ' live' : '');
 
-  const r = Number(stats.utc_daily_realized_usd || 0);
-  $('cards').innerHTML = [
-    ['Realized today', `<span class="v ${r > 0 ? 'pos' : r < 0 ? 'neg' : ''}">${r >= 0 ? '+' : ''}${r.toFixed(4)}</span>`],
-    ['Exposure', `<span class="v">$${Number(stats.exposure_usd || 0).toFixed(2)}</span>`],
-    ['New buys', `<span class="v">${stats.paused ? 'paused' : 'on'}</span>`],
-    ['Positions', `<span class="v">${Object.values(stats.status || {}).reduce((a, b) => a + b, 0)}</span>`],
-  ].map(([k, v]) => `<div class="card"><div class="k">${k}</div>${v}</div>`).join('');
+  let cls = '', dot = '', title = live ? 'Running — LIVE MODE' : 'Running — paper mode',
+      sub = 'Engine polling normally';
+  if (!health.engine_alive) {
+    cls = ' is-bad'; dot = ' danger'; title = 'Engine not responding';
+    sub = 'HTTP server is up but the trading engine has stopped polling';
+  } else if (health.unreconciled) {
+    cls = ' is-bad'; dot = ' danger'; title = 'Unreconciled trade';
+    sub = 'Reconcile before trading resumes';
+  } else if (health.paused) {
+    cls = ' is-warn'; dot = ' warn'; title = 'Running — new buys paused';
+    sub = 'Exits are still monitored';
+  }
+  $('hero').className = 'hero' + cls;
+  $('heroDot').className = 'state-dot' + dot;
+  $('heroTitle').textContent = title;
+  $('heroSub').textContent = sub + (health.last_poll_age_seconds != null
+    ? ` · last poll ${health.last_poll_age_seconds}s ago` : '');
+  $('heroPolicy').textContent = `EXIT AFTER ${health.earliest_exit_seconds}s, PROFIT FLOOR ONLY`;
 
+  const realized = Number(stats.utc_daily_realized_usd || 0);
+  const counts = stats.status || {};
+  $('stats').innerHTML = [
+    ['REALIZED TODAY', (realized >= 0 ? '+' : '') + realized.toFixed(4),
+      realized > 0 ? 'positive' : realized < 0 ? 'negative' : '', 'stablecoin units, gas excluded'],
+    ['EXPOSURE', '$' + Number(stats.exposure_usd || 0).toFixed(2), '', 'principal in open positions'],
+    ['NEW BUYS', stats.paused ? 'PAUSED' : 'ON', stats.paused ? 'warn' : 'positive',
+      stats.paused ? 'exits still monitored' : 'entries armed'],
+    ['POSITIONS', String(Object.values(counts).reduce((a, b) => a + b, 0)),
+      '', Object.entries(counts).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(' · ') || 'none yet'],
+  ].map(([label, value, tone, foot]) => `<div class="stat">
+      <div class="stat-label">${esc(label)}</div>
+      <div class="stat-value ${tone}">${esc(value)}</div>
+      <div class="stat-foot">${esc(foot)}</div></div>`).join('');
+
+  const open = positions.filter(p => p.status === 'OPEN').length;
+  $('posSub').textContent = `${positions.length} tracked · ${open} open`;
   $('posWrap').innerHTML = !positions.length
     ? '<div class="empty">No positions yet.</div>'
-    : `<table><thead><tr><th>Status</th><th>Symbol</th><th>Chain</th><th class="num">Spent</th>
-       <th class="num">Received</th><th class="num">PnL</th><th class="num">UW</th><th>Note</th></tr></thead><tbody>` +
-      positions.slice(0, 40).map(p => {
-        const sp = +p.buy_spent_units || 0, rc = +p.sell_received_units || 0;
+    : `<table class="market-table"><thead><tr>
+        <th>Status</th><th>Symbol</th><th>Chain</th><th>Spent</th>
+        <th>Received</th><th>PnL</th><th>UW</th><th>Note</th></tr></thead><tbody>` +
+      positions.slice(0, 50).map(p => {
+        const spent = +p.buy_spent_units || 0, got = +p.sell_received_units || 0;
         const done = p.status === 'CLOSED' || p.status === 'ABANDONED';
-        const pnl = done ? (rc - sp) / 1e6 : null;
-        return `<tr><td><span class="pill ${esc(p.status)}">${esc(p.status)}</span></td>
-          <td>${esc(p.symbol)}</td><td class="muted">${esc(p.chain)}</td>
-          <td class="num">${usd(sp)}</td><td class="num">${rc ? usd(rc) : '—'}</td>
-          <td class="num">${pnl === null ? '—' : (pnl >= 0 ? '+' : '') + pnl.toFixed(4)}</td>
-          <td class="num">${+p.underwater_checks || 0}</td>
-          <td class="muted">${esc((p.last_error || '').slice(0, 46))}</td></tr>`;
+        const pnl = done ? (got - spent) / 1e6 : null;
+        const tone = pnl === null ? '' : pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : '';
+        return `<tr>
+          <td><span class="status-pill ${esc(p.status)}">${esc(p.status)}</span></td>
+          <td class="market-sym">${esc(p.symbol)}</td>
+          <td class="muted">${esc(p.chain)}</td>
+          <td>${units(spent)}</td>
+          <td>${got ? units(got) : '<span class="muted">—</span>'}</td>
+          <td class="${tone}">${pnl === null ? '<span class="muted">—</span>'
+            : (pnl >= 0 ? '+' : '') + pnl.toFixed(4)}</td>
+          <td class="${(+p.underwater_checks || 0) > 20 ? 'warn' : ''}">${+p.underwater_checks || 0}</td>
+          <td class="note-cell">${esc((p.last_error || '').slice(0, 60))}</td></tr>`;
       }).join('') + '</tbody></table>';
 
   $('evWrap').innerHTML = !events.length
     ? '<div class="empty">No events yet.</div>'
-    : '<table><thead><tr><th>Time (UTC)</th><th>Event</th><th>Detail</th></tr></thead><tbody>' +
-      events.slice(0, 30).map(e => {
+    : '<div class="log">' + events.slice(0, 25).map(e => {
+        const sev = SEVERITY[e.kind] ?? '';
+        const mark = sev === 'CRITICAL' ? '!' : sev === 'WARN' ? '△' : sev === 'INFO' ? 'i' : '✓';
         const t = new Date((e.at || 0) * 1000).toISOString().slice(11, 19);
-        return `<tr><td class="muted">${t}</td><td>${esc(e.kind)}</td>
-          <td class="muted">${esc((e.detail || '').slice(0, 70))}</td></tr>`;
-      }).join('') + '</tbody></table>';
+        return `<div class="log-item">
+          <div class="log-line ${sev}">${mark}</div>
+          <div class="log-body">
+            <div class="log-top"><strong>${esc(e.kind)}</strong><time>${t} UTC</time></div>
+            ${e.detail ? `<p>${esc(e.detail)}</p>` : ''}
+          </div></div>`;
+      }).join('') + '</div>';
 
-  $('foot').textContent = 'Updated ' + new Date().toLocaleTimeString() +
-    (authDisabled ? ' · auth disabled (localhost only)' : '') + ' · refreshes every 20s';
+  $('foot').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' · refreshes every 20s';
 }
 
 boot();
