@@ -274,7 +274,13 @@ class Engine:
             for pool in result:
                 if pool.liquidity_usd >= self.cfg.min_liquidity_usd and not self.store.get(pool.key):
                     self.pending[pool.key] = pool
-        if good != len(chains):
+        # The breaker exists to stop trading on stale market data. A poll that
+        # returned fresh pools for at least one chain is not blind, so only a
+        # poll where EVERY chain failed counts. Treating a partial failure as
+        # total meant one flaky chain pinned feed_failures above the threshold
+        # permanently, re-pausing entries on every poll and silently undoing
+        # the operator's resume.
+        if good == 0:
             self.feed_failures += 1
         else:
             self.feed_failures = 0

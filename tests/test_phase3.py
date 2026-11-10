@@ -602,3 +602,65 @@ def test_feed_min_interval_bounds(cfg):
     with pytest.raises(ValueError, match='FEED_MIN_INTERVAL_SECONDS'):
         replace(cfg, feed_min_interval_seconds=Decimal('61')).validate()
     replace(cfg, feed_min_interval_seconds=Decimal('0')).validate()
+
+
+# --- F13: one flaky chain must not pin the circuit breaker on ---------------
+
+class PartialFeed:
+    """Discovery where one chain fails and the other returns pools."""
+
+    def __init__(self, failing):
+        self.failing = failing
+
+    async def fetch(self, chain):
+        if chain == self.failing:
+            raise TradingError('feed down for ' + chain)
+        return []
+
+
+async def test_partial_feed_failure_does_not_trip_the_breaker(cfg, store):
+    """One chain failing every poll used to pause entries forever."""
+    ex = FakeExchange()
+    en = Engine(replace(cfg, max_consecutive_feed_failures=2), store,
+                PartialFeed('robinhood'), {'robinhood': ex, 'solana': ex})
+    for _ in range(6):
+        await en.poll()
+    assert en.feed_failures == 0, 'a chain that still answers means we are not blind'
+    assert store.flag('paused') != '1', 'entries must stay armed on a partial feed'
+
+
+async def test_total_feed_failure_still_trips_the_breaker(cfg, store):
+    ex = FakeExchange()
+
+    class DeadFeed:
+        async def fetch(self, chain):
+            raise TradingError('feed down')
+
+    en = Engine(replace(cfg, max_consecutive_feed_failures=2), store,
+                DeadFeed(), {'robinhood': ex, 'solana': ex})
+    for _ in range(3):
+        await en.poll()
+    assert store.flag('paused') == '1', 'blind on every chain must pause entries'
+
+
+async def test_breaker_resets_once_a_chain_recovers(cfg, store):
+    ex = FakeExchange()
+
+    class Flaky:
+        def __init__(self):
+            self.alive = False
+
+        async def fetch(self, chain):
+            if not self.alive:
+                raise TradingError('down')
+            return []
+
+    feed = Flaky()
+    en = Engine(replace(cfg, max_consecutive_feed_failures=2), store, feed,
+                {'robinhood': ex, 'solana': ex})
+    for _ in range(3):
+        await en.poll()
+    assert en.feed_failures >= 2
+    feed.alive = True
+    await en.poll()
+    assert en.feed_failures == 0, 'recovery must clear the counter'
