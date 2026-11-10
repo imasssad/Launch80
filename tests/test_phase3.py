@@ -388,6 +388,18 @@ def test_entry_interval_default_and_bounds(monkeypatch, cfg):
     replace(cfg, entry_interval_seconds=Decimal('300')).validate()
 
 
+async def test_entry_loop_actually_runs_with_the_configured_interval(cfg, store):
+    """Regression: asyncio.wait_for adds the timeout to loop.time(), so a
+    Decimal interval raised TypeError and killed the engine on its first tick.
+    Mocking wait_for hid that, so this runs the real loop."""
+    en, _ = engine(replace(cfg, entry_interval_seconds=Decimal('0.1')), store)
+
+    async def stop_soon():
+        await asyncio.sleep(0.25)
+        en.stop()
+    await asyncio.gather(en._entry_loop(), stop_soon())   # must not raise
+
+
 async def test_entry_loop_waits_the_configured_interval(cfg, store):
     """The entry loop must pace on cfg, not a hardcoded 0.5s tick."""
     en, _ = engine(replace(cfg, entry_interval_seconds=Decimal('7')), store)

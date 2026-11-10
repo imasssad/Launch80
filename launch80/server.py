@@ -12,7 +12,10 @@ Two deployment shapes:
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 
 from . import __version__, auth as authlib
 from .config import Settings
@@ -43,6 +46,17 @@ def create_app(store: Store, cfg: Settings) -> FastAPI:
         if not auth.enabled():
             return 'local'
         return auth.authorized(request)
+
+    @app.get('/')
+    def index():
+        # The shell is public; every data route behind it requires a session.
+        # Serving it unauthenticated is what lets the browser render a login
+        # form at all.
+        page = Path(__file__).parent / 'web' / 'index.html'
+        if not page.is_file():
+            raise HTTPException(404, 'Dashboard UI not installed')
+        return FileResponse(page, media_type='text/html',
+                            headers={'Cache-Control': 'no-store'})
 
     # ---------------------------------------------------------------- auth
     @app.get('/api/auth/session')
@@ -107,11 +121,19 @@ def create_app(store: Store, cfg: Settings) -> FastAPI:
     def health():
         # Deliberately unauthenticated: liveness only, no position data. This is
         # what a public status page may expose.
-        return {'ok': True, 'mode': 'live' if cfg.live else 'paper',
+        import time as _time
+        beat = store.flag('engine_heartbeat')
+        age = _time.time() - float(beat) if beat else None
+        # Stale after four poll intervals: long enough to ride out a slow feed,
+        # short enough that a crashed engine does not read as healthy.
+        engine_alive = age is not None and age < max(120.0, cfg.poll_seconds * 4)
+        return {'ok': engine_alive, 'mode': 'live' if cfg.live else 'paper',
                 'exit_policy': 'profit_floor_after_timer',
                 'earliest_exit_seconds': cfg.hold_seconds,
                 'paused': store.flag('paused') == '1',
-                'unreconciled': store.has_unknowns()}
+                'unreconciled': store.has_unknowns(),
+                'engine_alive': engine_alive,
+                'last_poll_age_seconds': round(age, 1) if age is not None else None}
 
     @app.get('/stats')
     def stats(sid: str = Depends(guard)):

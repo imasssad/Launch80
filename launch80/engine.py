@@ -258,6 +258,10 @@ class Engine:
 
     async def poll(self):
         self.last_poll=time.time()
+        # Published so /health can distinguish "HTTP server up" from "engine
+        # actually trading". uvicorn runs as its own task, so an engine crash
+        # otherwise leaves a perfectly healthy-looking monitor.
+        self.store.set_flag('engine_heartbeat',str(self.last_poll))
         chains=list(self.exchanges)
         results = await asyncio.gather(*[self.discovery.fetch(chain) for chain in chains],return_exceptions=True)
         good=0
@@ -316,8 +320,10 @@ class Engine:
                 # costs several price-feed requests, so a fast tick will
                 # exhaust a rate-limited feed and starve the exit quotes that
                 # actually matter.
+                # float(): asyncio adds the timeout to loop.time(), which
+                # raises TypeError for a Decimal and would kill the engine.
                 await asyncio.wait_for(self._stopped.wait(),
-                                       timeout=self.cfg.entry_interval_seconds)
+                                       timeout=float(self.cfg.entry_interval_seconds))
             except asyncio.TimeoutError:
                 pass
 

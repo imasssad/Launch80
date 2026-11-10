@@ -45,8 +45,11 @@ def test_health_stays_public_and_leaks_no_positions(secured):
     r = client.get('/health')
     assert r.status_code == 200
     body = r.json()
+    # Pinned deliberately: /health is the one public route, so any new field
+    # here becomes public. Adding one must be a conscious edit to this list.
     assert set(body) == {'ok', 'mode', 'exit_policy', 'earliest_exit_seconds',
-                         'paused', 'unreconciled'}
+                         'paused', 'unreconciled', 'engine_alive',
+                         'last_poll_age_seconds'}
 
 
 def test_login_then_read(secured):
@@ -206,3 +209,50 @@ def test_responses_are_uncacheable_and_unframeable(secured):
     h = client.get('/health').headers
     assert 'no-store' in h['cache-control']
     assert h['x-frame-options'] == 'DENY'
+
+
+# --- dashboard shell --------------------------------------------------------
+
+def test_dashboard_shell_is_public_but_carries_no_data(secured, pool):
+    """The login form must render signed-out, and embed no stored data.
+
+    Field names appear in the page's JavaScript by necessity; what must never
+    appear is anything read from the journal. Asserted by seeding a position
+    and checking the shell is byte-identical.
+    """
+    client, store, _ = secured
+    before = client.get('/')
+    assert before.status_code == 200
+    assert 'text/html' in before.headers['content-type']
+    assert 'Operator sign-in' in before.text
+    assert 'no-store' in before.headers['cache-control']
+
+    store.claim(pool, 0, intended_spend_units=5_000_000)
+    store.open_position(pool.key, 5_000_000, 123, 'PAPER-secret-txid', 80)
+    after = client.get('/')
+    assert after.text == before.text, 'shell must not vary with journal contents'
+    for secret in ('PAPER-secret-txid', pool.mint, pool.symbol):
+        assert secret not in after.text
+
+
+def test_dashboard_data_still_requires_session_after_loading_shell(secured):
+    client, _, _ = secured
+    assert client.get('/').status_code == 200
+    assert client.get('/positions').status_code == 401
+
+
+# --- engine liveness --------------------------------------------------------
+
+def test_health_reports_dead_engine(secured):
+    """uvicorn survives an engine crash, so /health must not read as healthy."""
+    client, store, _ = secured
+    assert client.get('/health').json()['engine_alive'] is False, 'no heartbeat yet'
+
+    import time
+    store.set_flag('engine_heartbeat', str(time.time()))
+    body = client.get('/health').json()
+    assert body['engine_alive'] is True and body['ok'] is True
+
+    store.set_flag('engine_heartbeat', str(time.time() - 100000))
+    body = client.get('/health').json()
+    assert body['engine_alive'] is False and body['ok'] is False

@@ -24,6 +24,9 @@ launch80 = "launch80.main:main"
 [tool.setuptools.packages.find]
 include = ["launch80*"]
 
+[tool.setuptools.package-data]
+launch80 = ["web/*.html"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

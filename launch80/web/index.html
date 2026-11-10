@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Launch80</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--text:#16191d;--muted:#646b75;--line:#e3e6ea;
+    --ok:#1a7f46;--okbg:#e7f5ed;--warn:#8a6100;--warnbg:#fdf3dc;--bad:#a3242b;--badbg:#fbeaea;
+    --accent:#2f6feb}
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+    --bg:#101316;--card:#171b20;--text:#e8eaed;--muted:#9aa2ad;--line:#2a3038;
+    --ok:#58d08a;--okbg:#15291f;--warn:#e3b341;--warnbg:#2a2314;--bad:#f08a8a;--badbg:#2d1718;
+    --accent:#6ea0ff}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);padding:20px 16px;
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1020px;margin:0 auto}
+  header{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:16px}
+  h1{margin:0;font-size:20px;letter-spacing:-.01em}
+  .muted{color:var(--muted);font-size:13px}
+  .spacer{flex:1}
+  button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--line);
+    background:var(--card);color:var(--text);cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  input{font:inherit;padding:9px 11px;border-radius:8px;border:1px solid var(--line);
+    background:var(--bg);color:var(--text);width:100%}
+  .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .tag.paper{background:var(--okbg);color:var(--ok)} .tag.live{background:var(--badbg);color:var(--bad)}
+  .state{display:flex;align-items:center;gap:9px;padding:12px 14px;border-radius:10px;
+    font-weight:600;margin-bottom:16px}
+  .state.ok{background:var(--okbg);color:var(--ok)} .state.warn{background:var(--warnbg);color:var(--warn)}
+  .state.bad{background:var(--badbg);color:var(--bad)}
+  .dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .k{color:var(--muted);font-size:12px;margin-bottom:3px}
+  .v{font-size:19px;font-weight:650;font-variant-numeric:tabular-nums}
+  .v.pos{color:var(--ok)} .v.neg{color:var(--bad)}
+  h2{font-size:13px;margin:20px 0 8px;color:var(--muted);font-weight:600;
+    text-transform:uppercase;letter-spacing:.04em}
+  .scroll{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:9px 12px;text-align:left;white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:12px;border-bottom:1px solid var(--line)}
+  tr+tr td{border-top:1px solid var(--line)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;background:var(--line)}
+  .pill.OPEN{background:var(--warnbg);color:var(--warn)}
+  .pill.CLOSED{background:var(--okbg);color:var(--ok)}
+  .pill.ABANDONED,.pill.RECOVERY_BUY,.pill.RECOVERY_SELL,.pill.MANUAL_EXIT{background:var(--badbg);color:var(--bad)}
+  .empty{padding:16px;color:var(--muted);font-size:13px}
+  .login{max-width:340px;margin:12vh auto;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;padding:24px}
+  .login h1{margin-bottom:4px} .field{margin:14px 0}
+  .err{color:var(--bad);font-size:13px;min-height:19px;margin-top:8px}
+  footer{margin-top:18px;color:var(--muted);font-size:12px;text-align:center}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+
+<div id="loginView" class="hidden">
+  <form class="login" id="loginForm">
+    <h1>Launch80</h1>
+    <div class="muted">Operator sign-in</div>
+    <div class="field"><input id="pw" type="password" placeholder="Password" autocomplete="current-password" required></div>
+    <div class="field hidden" id="otpField"><input id="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code"></div>
+    <button class="primary" type="submit" style="width:100%">Sign in</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</div>
+
+<div id="appView" class="wrap hidden">
+  <header>
+    <h1>Launch80</h1><span id="modeTag"></span>
+    <span class="spacer"></span>
+    <button id="pauseBtn">Pause buys</button>
+    <button id="resumeBtn">Resume</button>
+    <button id="logoutBtn">Sign out</button>
+  </header>
+  <div id="state" class="state warn"><span class="dot"></span><span id="stateText">Loading…</span></div>
+  <div class="grid" id="cards"></div>
+  <h2>Positions</h2><div class="scroll" id="posWrap"></div>
+  <h2>Recent events</h2><div class="scroll" id="evWrap"></div>
+  <footer id="foot"></footer>
+</div>
+
+<script>
+'use strict';
+let CSRF = null, authDisabled = false, timer = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const usd = u => (Number(u) / 1e6).toFixed(6);
+
+async function api(path, opts = {}) {
+  const o = Object.assign({ cache: 'no-store', headers: {} }, opts);
+  if (o.method === 'POST' && CSRF) o.headers['X-CSRF-Token'] = CSRF;
+  const r = await fetch(path, o);
+  if (r.status === 401) { show('login'); throw new Error('unauthenticated'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function show(which) {
+  $('loginView').classList.toggle('hidden', which !== 'login');
+  $('appView').classList.toggle('hidden', which !== 'app');
+  if (which === 'login' && timer) { clearInterval(timer); timer = null; }
+}
+
+async function boot() {
+  try {
+    const s = await (await fetch('/api/auth/session', { cache: 'no-store' })).json();
+    authDisabled = !!s.auth_disabled;
+    CSRF = s.csrf;
+    $('otpField').classList.toggle('hidden', !s.totp_required);
+    if (s.authenticated) { show('app'); refresh(); timer = setInterval(refresh, 20000); }
+    else show('login');
+  } catch { show('login'); }
+}
+
+$('loginForm').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  $('loginErr').textContent = '';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: $('pw').value, otp: $('otp').value || null })
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { $('loginErr').textContent = body.detail || ('Sign-in failed (' + r.status + ')'); return; }
+    CSRF = body.csrf; $('pw').value = ''; $('otp').value = '';
+    show('app'); refresh(); timer = setInterval(refresh, 20000);
+  } catch { $('loginErr').textContent = 'Network error'; }
+});
+
+$('logoutBtn').onclick = async () => {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+  CSRF = null; show('login');
+};
+$('pauseBtn').onclick  = async () => { try { await api('/pause',  { method: 'POST' }); refresh(); } catch {} };
+$('resumeBtn').onclick = async () => {
+  try { await api('/resume', { method: 'POST' }); refresh(); }
+  catch (e) { alert('Resume refused — usually an unreconciled trade.'); }
+};
+
+async function refresh() {
+  let health, stats, positions, events;
+  try {
+    [health, stats, positions, events] = await Promise.all([
+      api('/health'), api('/stats'), api('/positions'), api('/events')]);
+  } catch { return; }
+
+  const live = health.mode === 'live';
+  $('modeTag').innerHTML = `<span class="tag ${live ? 'live' : 'paper'}">${esc(health.mode)}</span>`;
+  let cls = 'ok', msg = live ? 'Running — LIVE MODE' : 'Running — paper mode';
+  if (health.unreconciled) { cls = 'bad'; msg = 'Needs attention — unreconciled trade'; }
+  else if (health.paused)  { cls = 'warn'; msg = 'Running — new buys paused'; }
+  $('state').className = 'state ' + cls;
+  $('stateText').textContent = msg;
+
+  const r = Number(stats.utc_daily_realized_usd || 0);
+  $('cards').innerHTML = [
+    ['Realized today', `<span class="v ${r > 0 ? 'pos' : r < 0 ? 'neg' : ''}">${r >= 0 ? '+' : ''}${r.toFixed(4)}</span>`],
+    ['Exposure', `<span class="v">$${Number(stats.exposure_usd || 0).toFixed(2)}</span>`],
+    ['New buys', `<span class="v">${stats.paused ? 'paused' : 'on'}</span>`],
+    ['Positions', `<span class="v">${Object.values(stats.status || {}).reduce((a, b) => a + b, 0)}</span>`],
+  ].map(([k, v]) => `<div class="card"><div class="k">${k}</div>${v}</div>`).join('');
+
+  $('posWrap').innerHTML = !positions.length
+    ? '<div class="empty">No positions yet.</div>'
+    : `<table><thead><tr><th>Status</th><th>Symbol</th><th>Chain</th><th class="num">Spent</th>
+       <th class="num">Received</th><th class="num">PnL</th><th class="num">UW</th><th>Note</th></tr></thead><tbody>` +
+      positions.slice(0, 40).map(p => {
+        const sp = +p.buy_spent_units || 0, rc = +p.sell_received_units || 0;
+        const done = p.status === 'CLOSED' || p.status === 'ABANDONED';
+        const pnl = done ? (rc - sp) / 1e6 : null;
+        return `<tr><td><span class="pill ${esc(p.status)}">${esc(p.status)}</span></td>
+          <td>${esc(p.symbol)}</td><td class="muted">${esc(p.chain)}</td>
+          <td class="num">${usd(sp)}</td><td class="num">${rc ? usd(rc) : '—'}</td>
+          <td class="num">${pnl === null ? '—' : (pnl >= 0 ? '+' : '') + pnl.toFixed(4)}</td>
+          <td class="num">${+p.underwater_checks || 0}</td>
+          <td class="muted">${esc((p.last_error || '').slice(0, 46))}</td></tr>`;
+      }).join('') + '</tbody></table>';
+
+  $('evWrap').innerHTML = !events.length
+    ? '<div class="empty">No events yet.</div>'
+    : '<table><thead><tr><th>Time (UTC)</th><th>Event</th><th>Detail</th></tr></thead><tbody>' +
+      events.slice(0, 30).map(e => {
+        const t = new Date((e.at || 0) * 1000).toISOString().slice(11, 19);
+        return `<tr><td class="muted">${t}</td><td>${esc(e.kind)}</td>
+          <td class="muted">${esc((e.detail || '').slice(0, 70))}</td></tr>`;
+      }).join('') + '</tbody></table>';
+
+  $('foot').textContent = 'Updated ' + new Date().toLocaleTimeString() +
+    (authDisabled ? ' · auth disabled (localhost only)' : '') + ' · refreshes every 20s';
+}
+
+boot();
+</script>
+</body>
+</html>
