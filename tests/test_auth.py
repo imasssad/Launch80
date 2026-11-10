@@ -256,3 +256,31 @@ def test_health_reports_dead_engine(secured):
     store.set_flag('engine_heartbeat', str(time.time() - 100000))
     body = client.get('/health').json()
     assert body['engine_alive'] is False and body['ok'] is False
+
+
+# --- proxy-aware client IP --------------------------------------------------
+
+def _req(peer, headers=None):
+    scope_headers = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    scope = {'type': 'http', 'headers': scope_headers, 'client': (peer, 1234)}
+    from starlette.requests import Request as SRequest
+    return SRequest(scope)
+
+
+def test_forwarded_ip_trusted_only_from_loopback():
+    from launch80.auth import client_ip
+    # Our own reverse proxy on this host: trust the forwarded client.
+    assert client_ip(_req('127.0.0.1', {'X-Forwarded-For': '203.0.113.9'})) == '203.0.113.9'
+    # First hop wins when a chain is present.
+    assert client_ip(_req('127.0.0.1', {'X-Forwarded-For': '203.0.113.9, 10.0.0.1'})) == '203.0.113.9'
+
+
+def test_forwarded_ip_ignored_from_remote_peer():
+    """A remote client must not spoof its IP to dodge the login throttle."""
+    from launch80.auth import client_ip
+    assert client_ip(_req('198.51.100.7', {'X-Forwarded-For': '127.0.0.1'})) == '198.51.100.7'
+
+
+def test_client_ip_without_forwarded_header():
+    from launch80.auth import client_ip
+    assert client_ip(_req('198.51.100.7')) == '198.51.100.7'

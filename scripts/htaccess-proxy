@@ -1,0 +1,14 @@
+# Route every request to the PHP reverse proxy, which forwards to the local
+# FastAPI monitor. Install as <docroot>/.htaccess alongside index.php
+# (a copy of scripts/proxy.php).
+#
+# Real files (if any) still win, so a static asset placed in the docroot is
+# served directly rather than proxied.
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L,QSA]
+
+# Basic auth headers are not passed to PHP under CGI/FastCGI without this.
+RewriteCond %{HTTP:Authorization} ^(.*)
+RewriteRule .* - [e=HTTP_AUTHORIZATION:%1]

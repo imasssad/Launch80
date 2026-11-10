@@ -38,10 +38,25 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+LOOPBACK = {'127.0.0.1', '::1', 'localhost', 'testclient'}
+
+
 def client_ip(request: Request) -> str:
-    # Behind a proxy this is only trustworthy when the ASGI server is run with
-    # --proxy-headers and a restricted forwarded-allow-ips.
-    return request.client.host if request.client else 'unknown'
+    """Real client IP, honouring X-Forwarded-For only from a local proxy.
+
+    The monitor binds to 127.0.0.1, so the only thing that can open a
+    connection is a reverse proxy on this host. A forwarded header is
+    therefore trustworthy exactly when the peer is loopback; from anywhere
+    else it is attacker-controlled and ignored, so a remote client cannot
+    spoof an IP to dodge the login throttle.
+    """
+    peer = request.client.host if request.client else 'unknown'
+    if peer in LOOPBACK:
+        forwarded = request.headers.get('x-forwarded-for', '')
+        first = forwarded.split(',')[0].strip()
+        if first:
+            return first[:64]
+    return peer
 
 
 def user_agent(request: Request) -> str:
