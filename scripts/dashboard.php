@@ -20,6 +20,14 @@ declare(strict_types=1);
 const BOT      = 'http://127.0.0.1:8088';
 const PASSFILE = __DIR__ . '/../dashboard.pass';
 
+// ---- never cache: an authenticated page must not sit in a shared cache -----
+// Cloudflare (or any proxy) fronting this would otherwise be able to serve one
+// authorised response to everybody. Sent before the auth check so the 401 is
+// uncacheable too.
+header('Cache-Control: no-store, no-cache, must-revalidate, private, max-age=0');
+header('Pragma: no-cache');
+header('Vary: Authorization');
+
 // ---- auth (fail closed) ----------------------------------------------------
 if (!is_readable(PASSFILE)) {
     http_response_code(503);
@@ -27,9 +35,27 @@ if (!is_readable(PASSFILE)) {
     exit("Dashboard not configured: password file missing. Refusing to serve data.\n");
 }
 $hash = trim((string)file_get_contents(PASSFILE));
-$user = $_SERVER['PHP_AUTH_USER'] ?? '';
+
+/**
+ * Read Basic credentials.
+ *
+ * PHP_AUTH_USER/PW are only populated when PHP runs as an Apache module. Under
+ * CGI/FastCGI/PHP-FPM the Authorization header is not forwarded into them, so
+ * the raw header is parsed as a fallback (REDIRECT_ prefix appears when
+ * mod_rewrite forwards it). Without this the page can never authenticate on a
+ * FastCGI host.
+ */
 $pass = $_SERVER['PHP_AUTH_PW'] ?? '';
-if ($hash === '' || !password_verify($pass, $hash)) {
+if ($pass === '') {
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+    if (stripos($header, 'basic ') === 0) {
+        $decoded = base64_decode(substr($header, 6), true);
+        if ($decoded !== false && str_contains($decoded, ':')) {
+            [, $pass] = explode(':', $decoded, 2);
+        }
+    }
+}
+if ($hash === '' || $pass === '' || !password_verify($pass, $hash)) {
     header('WWW-Authenticate: Basic realm="Launch80", charset="UTF-8"');
     http_response_code(401);
     exit("Authentication required.\n");

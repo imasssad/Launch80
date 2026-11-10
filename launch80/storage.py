@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_at ON events(at);
 CREATE TABLE IF NOT EXISTS flags (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  id TEXT PRIMARY KEY, created_at REAL NOT NULL, last_seen_at REAL NOT NULL,
+  expires_at REAL NOT NULL, revoked_at REAL, ip TEXT, user_agent TEXT
+);
+CREATE INDEX IF NOT EXISTS admin_sessions_expiry ON admin_sessions(expires_at);
 '''
 
 class Store:
@@ -275,3 +280,49 @@ class Store:
         with self.lock:
             cur = self.db.execute("UPDATE positions SET status='CLOSED',sell_at=?,sell_tx=?,sell_received_units=?,last_error=NULL WHERE key=? AND status IN ('RECOVERY_SELL','MANUAL_EXIT')",(time.time(),txid,received_units,key))
             return cur.rowcount == 1
+
+    # ---------------------------------------------------------- admin sessions
+    def create_admin_session(self, sid: str, lifetime: int, ip: str, agent: str):
+        t = time.time()
+        with self.lock:
+            self.db.execute("""INSERT OR REPLACE INTO admin_sessions
+                (id,created_at,last_seen_at,expires_at,revoked_at,ip,user_agent)
+                VALUES(?,?,?,?,NULL,?,?)""", (sid, t, t, t + lifetime, ip, agent))
+            # Opportunistic cleanup; sessions are small but unbounded otherwise.
+            self.db.execute('DELETE FROM admin_sessions WHERE expires_at < ?', (t - 86400,))
+
+    def touch_admin_session(self, sid: str, idle: int, touch_every: int) -> str | None:
+        """Return sid when the session is live, refreshing last_seen sparingly."""
+        t = time.time()
+        with self.lock:
+            row = self.db.execute(
+                'SELECT last_seen_at,expires_at,revoked_at FROM admin_sessions WHERE id=?',
+                (sid,)).fetchone()
+            if row is None or row['revoked_at'] is not None:
+                return None
+            if row['expires_at'] <= t or (t - row['last_seen_at']) > idle:
+                return None
+            if (t - row['last_seen_at']) > touch_every:
+                self.db.execute('UPDATE admin_sessions SET last_seen_at=? WHERE id=?', (t, sid))
+        return sid
+
+    def revoke_admin_session(self, sid: str):
+        with self.lock:
+            self.db.execute('UPDATE admin_sessions SET revoked_at=? WHERE id=? AND revoked_at IS NULL',
+                            (time.time(), sid))
+
+    def revoke_all_admin_sessions(self) -> int:
+        with self.lock:
+            cur = self.db.execute('UPDATE admin_sessions SET revoked_at=? WHERE revoked_at IS NULL',
+                                  (time.time(),))
+            return cur.rowcount or 0
+
+    def admin_sessions(self) -> list[dict]:
+        t = time.time()
+        with self.lock:
+            rows = self.db.execute("""SELECT id,created_at,last_seen_at,ip,user_agent
+                FROM admin_sessions WHERE revoked_at IS NULL AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 50""", (t,)).fetchall()
+        return [{'id': r['id'][:12], 'created_at': r['created_at'],
+                 'last_seen_at': r['last_seen_at'], 'ip': r['ip'],
+                 'user_agent': r['user_agent']} for r in rows]

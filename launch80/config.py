@@ -54,6 +54,11 @@ class Settings:
     max_consecutive_feed_failures: int
     max_exit_retry_seconds: int
     control_token: str
+    admin_password: str
+    session_secret: str
+    totp_secret: str
+    owner_ip_allowlist: tuple[str, ...]
+    cookie_secure: bool
     robinhood_rpc: str
     solana_rpc: str
     zero_x_key: str
@@ -108,6 +113,14 @@ class Settings:
             max_consecutive_feed_failures=int(os.getenv('MAX_CONSECUTIVE_FEED_FAILURES', '5')),
             max_exit_retry_seconds=int(os.getenv('MAX_EXIT_RETRY_SECONDS', '45')),
             control_token=os.getenv('CONTROL_TOKEN', ''),
+            # Operator dashboard auth. With no ADMIN_PASSWORD the monitor stays
+            # localhost-only and unauthenticated, as before; set it to serve the
+            # dashboard anywhere reachable from a network.
+            admin_password=os.getenv('ADMIN_PASSWORD', ''),
+            session_secret=os.getenv('SESSION_SECRET', ''),
+            totp_secret=os.getenv('TOTP_SECRET', ''),
+            owner_ip_allowlist=tuple(x.strip() for x in os.getenv('OWNER_IP_ALLOWLIST', '').split(',') if x.strip()),
+            cookie_secure=_b('COOKIE_SECURE', True),
             robinhood_rpc=os.getenv('ROBINHOOD_RPC_URL', 'https://rpc.mainnet.chain.robinhood.com'),
             solana_rpc=os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
             zero_x_key=os.getenv('ZEROX_API_KEY', ''),
@@ -254,3 +267,12 @@ class Settings:
                 raise ValueError('Use a production Solana RPC, not public mainnet RPC')
         if self.control_token and len(self.control_token) < 24:
             raise ValueError('CONTROL_TOKEN should be >=24 chars when present')
+        # Dashboard auth: a weak password or a missing signing secret would be
+        # worse than no dashboard, so both are enforced once auth is enabled.
+        if self.admin_password:
+            if len(self.admin_password) < 14:
+                raise ValueError('ADMIN_PASSWORD must be at least 14 characters')
+            if len(self.session_secret) < 32:
+                raise ValueError('ADMIN_PASSWORD requires SESSION_SECRET of at least 32 characters')
+        if self.totp_secret and not self.admin_password:
+            raise ValueError('TOTP_SECRET requires ADMIN_PASSWORD')
