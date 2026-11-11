@@ -731,3 +731,71 @@ async def test_exit_worker_failure_backs_the_key_off(cfg, store, pool):
     assert row['next_sell_retry_at'] > time.time(), 'failed key must be deferred'
     errors = [e for e in store.events() if e['kind'] == 'EXIT_WORKER_ERROR']
     assert len(errors) <= 3, f'hot loop: {len(errors)} failures in ~1.2s'
+
+
+# --- F15: a dead pool must back off, not hammer the feed forever -----------
+
+async def test_quote_failures_back_off_exponentially(cfg, store, pool):
+    """A rugged pool returns no liquidity and never will again.
+
+    Re-asking every PROFIT_RECHECK_SECONDS forever burned the feed quota that
+    live positions need to exit, and buried real events under thousands of
+    identical SELL_QUOTE_RETRY entries.
+    """
+    en, ex = engine(replace(cfg, profit_recheck_seconds=10,
+                            quote_backoff_cap_seconds=600), store)
+    assert await en.enter(pool)
+    ex.bad_exit_quote = True
+
+    delays = []
+    for _ in range(6):
+        before = time.time()
+        store.db.execute('UPDATE positions SET sell_due_at=?,next_sell_retry_at=0 WHERE key=?',
+                         (before - 1, pool.key))
+        await en.exit(store.get(pool.key))
+        delays.append(round(store.get(pool.key)['next_sell_retry_at'] - before))
+
+    assert delays[0] <= 11, f'first retry should be prompt, got {delays[0]}s'
+    assert delays == sorted(delays), f'delays must not decrease: {delays}'
+    assert delays[-1] > delays[0] * 4, f'no meaningful backoff: {delays}'
+    assert delays[-1] <= 600, 'cap must hold'
+
+
+async def test_quote_failure_run_resets_when_the_pool_answers(cfg, store, pool):
+    en, ex = engine(cfg, store)
+    assert await en.enter(pool)
+    ex.bad_exit_quote = True
+    store.db.execute('UPDATE positions SET sell_due_at=? WHERE key=?', (time.time() - 1, pool.key))
+    await en.exit(store.get(pool.key))
+    assert store.get(pool.key)['quote_failures'] >= 1
+
+    ex.bad_exit_quote = False
+    ex.sell_quote_multiplier = 0.80          # answers, but below the floor
+    store.db.execute('UPDATE positions SET next_sell_retry_at=0 WHERE key=?', (pool.key,))
+    await en.exit(store.get(pool.key))
+    assert store.get(pool.key)['quote_failures'] == 0, 'a live quote clears the run'
+
+
+async def test_repeated_quote_failures_are_not_logged_every_time(cfg, store, pool):
+    """The dashboard must show a trail, not a flood."""
+    en, ex = engine(cfg, store)
+    assert await en.enter(pool)
+    ex.bad_exit_quote = True
+    for _ in range(12):
+        store.db.execute('UPDATE positions SET sell_due_at=?,next_sell_retry_at=0 WHERE key=?',
+                         (time.time() - 1, pool.key))
+        await en.exit(store.get(pool.key))
+    logged = [e for e in store.events(300) if e['kind'] == 'SELL_QUOTE_RETRY']
+    assert len(logged) <= 4, f'{len(logged)} retry events for 12 failures is a flood'
+
+
+async def test_persistent_failure_raises_one_alert(cfg, store, pool):
+    en, ex = engine(replace(cfg, quote_failure_alert_after=5), store)
+    assert await en.enter(pool)
+    ex.bad_exit_quote = True
+    for _ in range(9):
+        store.db.execute('UPDATE positions SET sell_due_at=?,next_sell_retry_at=0 WHERE key=?',
+                         (time.time() - 1, pool.key))
+        await en.exit(store.get(pool.key))
+    alerts = [e for e in store.events(300) if e['kind'] == 'QUOTE_UNAVAILABLE_LONG']
+    assert len(alerts) == 1, f'expected exactly one alert, got {len(alerts)}'

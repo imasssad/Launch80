@@ -218,10 +218,29 @@ class Engine:
             self.store.log('SELL_UNCERTAIN',pool.key,self.cfg.scrub(exc))
             return False
         except Exception as exc:
-            # No sale initiated. Missing quote/route is NOT a sell attempt.
-            delay = min(self.cfg.max_exit_retry_seconds,self.cfg.profit_recheck_seconds)
-            self.store.defer_quote_unavailable(pool.key,exc.__class__.__name__+': '+self.cfg.scrub(exc),delay)
-            self.store.log('SELL_QUOTE_RETRY',pool.key,f'{exc.__class__.__name__}; retry_in={delay}s')
+            # No sale initiated. A missing quote or route is NOT a sell attempt.
+            #
+            # Back off as failures repeat. A pool whose liquidity has been
+            # pulled never answers again, so asking every PROFIT_RECHECK_SECONDS
+            # forever burns the feed quota that live positions need to exit, and
+            # buries real events under thousands of identical retries. The run
+            # resets the moment a quote comes back.
+            failures = self.store.defer_quote_unavailable(
+                pool.key,exc.__class__.__name__+': '+self.cfg.scrub(exc),
+                self.cfg.profit_recheck_seconds)
+            delay = min(self.cfg.quote_backoff_cap_seconds,
+                        self.cfg.profit_recheck_seconds * 2 ** min(max(failures-1,0),8))
+            # Reschedule only: calling defer again would double-count the run.
+            self.store.reschedule_quote(pool.key,delay)
+            # Log the first few, then sparsely: an unreachable pool should leave
+            # a trail, not a flood.
+            if failures <= 3 or failures % 25 == 0:
+                self.store.log('SELL_QUOTE_RETRY',pool.key,
+                               f'{exc.__class__.__name__}; attempt={failures}; retry_in={delay}s')
+            if failures == self.cfg.quote_failure_alert_after:
+                self.store.log('QUOTE_UNAVAILABLE_LONG',pool.key,
+                    f'No usable exit quote after {failures} attempts; the pool may be delisted '
+                    'or its liquidity pulled. Manual review advised.')
             return False
         if not self.store.mark_selling(pool.key):
             return False

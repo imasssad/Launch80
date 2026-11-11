@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS positions (
   last_exit_quote_at REAL,
   underwater_since REAL,
   underwater_checks INTEGER NOT NULL DEFAULT 0,
-  underwater_alerted INTEGER NOT NULL DEFAULT 0
+  underwater_alerted INTEGER NOT NULL DEFAULT 0,
+  quote_failures INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS positions_status_due ON positions(status, sell_due_at);
 CREATE TABLE IF NOT EXISTS events (
@@ -72,6 +73,7 @@ class Store:
                 'underwater_since': 'REAL',
                 'underwater_checks': 'INTEGER NOT NULL DEFAULT 0',
                 'underwater_alerted': 'INTEGER NOT NULL DEFAULT 0',
+                'quote_failures': 'INTEGER NOT NULL DEFAULT 0',
             }
             for name, spec in migrations.items():
                 if name not in cols:
@@ -154,7 +156,7 @@ class Store:
         # Preserve OPEN and capacity/exposure accounting even for indefinite holds.
         t = time.time() if now is None else now
         with self.lock:
-            self.db.execute("""UPDATE positions SET next_sell_retry_at=?,
+            self.db.execute("""UPDATE positions SET next_sell_retry_at=?,quote_failures=0,
                 last_exit_quote_units=?,last_exit_quote_at=?,
                 underwater_since=COALESCE(underwater_since,?),
                 underwater_checks=underwater_checks+1,
@@ -171,15 +173,38 @@ class Store:
         t = time.time() if now is None else now
         with self.lock:
             self.db.execute("""UPDATE positions SET last_exit_quote_units=?,last_exit_quote_at=?,
-              underwater_since=NULL,underwater_alerted=0,last_error=NULL WHERE key=? AND status='OPEN'""",
+              underwater_since=NULL,underwater_alerted=0,quote_failures=0,
+              last_error=NULL WHERE key=? AND status='OPEN'""",
               (str(quote_units),t,key))
 
-    def defer_quote_unavailable(self,key: str,reason: str,delay: int):
-        # A failed read-only quote is not a failed sell attempt.
+    def defer_quote_unavailable(self,key: str,reason: str,delay: int) -> int:
+        """Defer a position after a failed read-only quote, and count the run.
+
+        A failed quote is not a failed sell attempt, so it must not touch
+        sell_attempts. The consecutive count is returned so the caller can back
+        off: a pool whose liquidity has been pulled never answers again, and
+        re-asking every PROFIT_RECHECK_SECONDS forever burns the feed quota
+        that live positions need.
+        """
         with self.lock:
-            self.db.execute("""UPDATE positions SET next_sell_retry_at=?,last_error=?
-                 WHERE key=? AND status='OPEN'""",
+            self.db.execute("""UPDATE positions SET next_sell_retry_at=?,last_error=?,
+                 quote_failures=quote_failures+1 WHERE key=? AND status='OPEN'""",
                  (time.time()+delay,str(reason)[:400],key))
+            row = self.db.execute('SELECT quote_failures FROM positions WHERE key=?',
+                                  (key,)).fetchone()
+            return row['quote_failures'] if row else 0
+
+    def reschedule_quote(self,key: str,delay: int):
+        """Move the next re-quote without touching the failure count."""
+        with self.lock:
+            self.db.execute("UPDATE positions SET next_sell_retry_at=? WHERE key=? AND status='OPEN'",
+                            (time.time()+delay,key))
+
+    def clear_quote_failures(self,key: str):
+        """A quote came back, so the pool is answering again."""
+        with self.lock:
+            self.db.execute("UPDATE positions SET quote_failures=0 WHERE key=? AND status='OPEN'",
+                            (key,))
 
     def reset_sell_after_price_change(self,key: str,reason: str,delay: int):
         # Never re-broadcast an uncertain tx. Only use for an explicitly rejected

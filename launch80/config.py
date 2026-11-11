@@ -50,6 +50,8 @@ class Settings:
     poll_seconds: int
     entry_interval_seconds: Decimal
     feed_min_interval_seconds: Decimal
+    quote_backoff_cap_seconds: int
+    quote_failure_alert_after: int
     page_count: int
     max_buy_attempts_per_hour: int
     max_consecutive_feed_failures: int
@@ -113,6 +115,10 @@ class Settings:
             # GeckoTerminal tier allows roughly 30/min and rejects bursts, so
             # 2s keeps us inside it. Set 0 on a paid plan.
             feed_min_interval_seconds=_d('FEED_MIN_INTERVAL_SECONDS', '2'),
+            # Exit re-quotes back off exponentially while a pool keeps failing,
+            # up to this cap, so a dead pool cannot monopolise the feed.
+            quote_backoff_cap_seconds=int(os.getenv('QUOTE_BACKOFF_CAP_SECONDS','600')),
+            quote_failure_alert_after=int(os.getenv('QUOTE_FAILURE_ALERT_AFTER','20')),
             page_count=int(os.getenv('PAGE_COUNT', '2')),
             max_buy_attempts_per_hour=int(os.getenv('MAX_BUY_ATTEMPTS_PER_HOUR', '10')),
             max_consecutive_feed_failures=int(os.getenv('MAX_CONSECUTIVE_FEED_FAILURES', '5')),
@@ -211,6 +217,10 @@ class Settings:
             raise ValueError('ENTRY_INTERVAL_SECONDS must be 0.1..300')
         if not 0 <= self.feed_min_interval_seconds <= 60:
             raise ValueError('FEED_MIN_INTERVAL_SECONDS must be 0..60')
+        if not self.profit_recheck_seconds <= self.quote_backoff_cap_seconds <= 86400:
+            raise ValueError('QUOTE_BACKOFF_CAP_SECONDS must be >= PROFIT_RECHECK_SECONDS and <= 86400')
+        if not 1 <= self.quote_failure_alert_after <= 1000:
+            raise ValueError('QUOTE_FAILURE_ALERT_AFTER must be 1..1000')
         if not 1 <= self.page_count <= 5:
             raise ValueError('PAGE_COUNT invalid')
         if not 1 <= self.max_buy_attempts_per_hour <= 1000:
