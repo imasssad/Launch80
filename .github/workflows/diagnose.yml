@@ -1,0 +1,67 @@
+name: Diagnose
+
+# Read-only crash forensics on the deployment host, run on demand.
+# Collects process state, log excerpts and a fixed allowlist of non-secret
+# tuning settings. No credential is ever printed, and nothing is modified.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Set up SSH with pinned host key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Collect diagnostics
+        env:
+          APP: ${{ secrets.DEPLOY_PATH }}
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes "$TARGET" \
+            "cd '$APP' || exit 1
+             LOG=data/service.log
+             echo '=============== PROCESS ==============='
+             pgrep -af 'launch80 run' || echo '(no launch80 process running)'
+             echo \"uptime: \$(uptime)\"
+             echo 'memory:'; free -m | head -3
+             echo 'disk:'; df -h . | tail -1
+             echo
+             echo '=============== TUNING CONFIG (allowlist) ==============='
+             grep -E '^(LIVE|BUY_ENABLED|ENABLE_ROBINHOOD|ENABLE_SOLANA|POLL_SECONDS|PAGE_COUNT|ENTRY_INTERVAL_SECONDS|FEED_MIN_INTERVAL_SECONDS|MIN_LIQUIDITY_USD|BUY_USD|MAX_OPEN_POSITIONS|PROFIT_RECHECK_SECONDS|HOLD_SECONDS|MAX_CONSECUTIVE_FEED_FAILURES|COOKIE_SECURE)=' .env | sed 's/^/  /'
+             echo
+             echo '=============== TRACEBACK COUNT ==============='
+             grep -c 'Traceback (most recent call last)' \$LOG || echo 0
+             echo
+             echo '=============== LAST TRACEBACK (40 lines) ==============='
+             awk '/Traceback \(most recent call last\)/{n=NR} END{if(n) print n; else print 0}' \$LOG > /tmp/tbline
+             TB=\$(cat /tmp/tbline)
+             if [ \"\$TB\" != '0' ]; then sed -n \"\${TB},\$((TB+40))p\" \$LOG; else echo '(none)'; fi
+             echo
+             echo '=============== FAILURE MARKERS ==============='
+             grep -nE 'Invalid configuration|SystemExit|already running|RuntimeError|TypeError|ValueError|sqlite3|database is locked|MemoryError|Killed|CancelledError|CRITICAL' \$LOG | tail -25 || echo '(none)'
+             echo
+             echo '=============== ENGINE RESTART CADENCE ==============='
+             grep -o 'ENGINE_ST[A-Z]*' \$LOG | sort | uniq -c || echo '(none in log)'
+             echo 'journal:'
+             .venv/bin/launch80 events 2>/dev/null | grep -oE '\"kind\": \"[A-Z_]+\"' | sort | uniq -c | sort -rn | head -15
+             echo
+             echo '=============== WATCHDOG RESTARTS ==============='
+             tail -20 data/watchdog.log 2>/dev/null || echo '(no watchdog log)'
+             echo
+             echo '=============== HEALTH ==============='
+             curl -s --max-time 6 http://127.0.0.1:8088/health || echo '(unreachable)'
+             echo
+             echo
+             echo '=============== LOG TAIL ==============='
+             tail -40 \$LOG"
