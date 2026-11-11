@@ -163,7 +163,23 @@ class Engine:
         current = self.store.get(row['key'])
         if not current or current['status'] != 'OPEN':
             return False
-        backend = self.exchanges[current['chain']]
+        backend = self.exchanges.get(current['chain'])
+        if backend is None:
+            # The chain was disabled while this position was still open, so
+            # nothing here can price or sell it. Raising instead put the key
+            # straight back into due() and spun the exit loop twice a second.
+            # MANUAL_EXIT is terminal for due(), which stops the loop, keeps
+            # the position's exposure counted, and tells the operator the only
+            # two ways out: re-enable the chain, or abandon it.
+            self.store.set_error(row['key'],'MANUAL_EXIT',
+                f"Chain {current['chain']} is disabled; cannot quote or sell this position")
+            self.store.set_flag('paused','1')
+            self.store.log('MANUAL_EXIT',row['key'],
+                f"ENABLE_{current['chain'].upper()} is false while the position is open; "
+                're-enable that chain to exit it, or abandon it')
+            LOG.error('Position %s is on disabled chain %s; quarantined for operator action',
+                      row['key'],current['chain'])
+            return False
         pool = Pool(current['chain'],current['pool'],current['mint'],current['symbol'],
                     current['dex'],Decimal(current['liquidity_usd']),current['created_at'])
         intended = int(current['bought_units'])
@@ -341,6 +357,12 @@ class Engine:
                     except Exception:
                         self.store.set_flag('paused','1')
                         self.store.log('EXIT_WORKER_ERROR',key,'Unexpected exit worker failure')
+                        # Back the key off before it can be picked up again.
+                        # Without this ANY repeating failure becomes a hot loop
+                        # that writes a traceback twice a second until the host
+                        # kills the process.
+                        self.store.defer_quote_unavailable(
+                            key,'Exit worker error; backing off',self.cfg.max_exit_retry_seconds)
                         LOG.exception('Critical: exit worker error for %s',key)
                     self._exit_tasks.pop(key,None)
             for row in self.store.due(time.time(),limit=25):
@@ -354,9 +376,26 @@ class Engine:
         if self._exit_tasks:
             await asyncio.gather(*self._exit_tasks.values(),return_exceptions=True)
 
+    def quarantine_orphaned_chains(self):
+        """Park open positions whose chain is no longer configured.
+
+        Disabling a chain in .env does not close the positions already held on
+        it. Finding them here, once at startup, beats rediscovering them on
+        every tick of the exit loop.
+        """
+        for row in self.store.all_positions(300):
+            if row['status'] == 'OPEN' and row['chain'] not in self.exchanges:
+                self.store.set_error(row['key'],'MANUAL_EXIT',
+                    f"Chain {row['chain']} is disabled; cannot quote or sell this position")
+                self.store.set_flag('paused','1')
+                self.store.log('MANUAL_EXIT',row['key'],
+                    f"ENABLE_{row['chain'].upper()} is false while the position is open")
+                LOG.error('Startup: position %s is on disabled chain %s',row['key'],row['chain'])
+
     async def run(self):
         self.store.verify_mode('live' if self.cfg.live else 'paper')
         self.store.pending_on_restart()
+        self.quarantine_orphaned_chains()
         if self.store.has_unknowns():
             self.store.set_flag('paused','1')
             self.store.log('RECOVERY_HALT','','Pending trade after restart: reconcile before resuming buys')

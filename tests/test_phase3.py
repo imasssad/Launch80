@@ -664,3 +664,70 @@ async def test_breaker_resets_once_a_chain_recovers(cfg, store):
     feed.alive = True
     await en.poll()
     assert en.feed_failures == 0, 'recovery must clear the counter'
+
+
+# --- F14: a position on a disabled chain must not spin the exit loop -------
+
+async def test_disabled_chain_position_quarantines_instead_of_raising(cfg, store, pool):
+    """Observed in production: 17,100 identical KeyError tracebacks.
+
+    ENABLE_ROBINHOOD=false removed the adapter while a Robinhood position was
+    still OPEN. exit() raised KeyError, the handler popped the task, due()
+    returned the same row 0.5s later, and the loop wrote a traceback twice a
+    second until the host killed the process.
+    """
+    en, ex = engine(cfg, store)          # exchanges has 'solana' only
+    assert await en.enter(pool)
+    orphan = replace(pool, chain='robinhood', pool='0xabc')
+    store.claim(orphan, 0, intended_spend_units=5_000_000)
+    store.open_position(orphan.key, 5_000_000, 10, 'tx', 80)
+
+    assert not await en.exit({'key': orphan.key})          # must not raise
+    row = store.get(orphan.key)
+    assert row['status'] == 'MANUAL_EXIT'
+    assert 'disabled' in row['last_error']
+
+
+async def test_quarantined_orphan_leaves_the_due_queue(cfg, store, pool):
+    """MANUAL_EXIT is terminal for due(), which is what stops the hot loop."""
+    en, ex = engine(cfg, store)
+    orphan = replace(pool, chain='robinhood', pool='0xabc')
+    store.claim(orphan, 0, intended_spend_units=5_000_000)
+    store.open_position(orphan.key, 5_000_000, 10, 'tx', 0)   # due immediately
+    assert any(r['key'] == orphan.key for r in store.due(time.time()))
+    await en.exit({'key': orphan.key})
+    assert not any(r['key'] == orphan.key for r in store.due(time.time())), \
+        'a quarantined position must stop being rescheduled'
+
+
+async def test_startup_quarantines_orphaned_chains(cfg, store, pool):
+    en, ex = engine(cfg, store)
+    orphan = replace(pool, chain='robinhood', pool='0xabc')
+    store.claim(orphan, 0, intended_spend_units=5_000_000)
+    store.open_position(orphan.key, 5_000_000, 10, 'tx', 80)
+    en.quarantine_orphaned_chains()
+    assert store.get(orphan.key)['status'] == 'MANUAL_EXIT'
+    assert store.flag('paused') == '1'
+
+
+async def test_exit_worker_failure_backs_the_key_off(cfg, store, pool):
+    """Any repeating worker failure must stop being retried every 0.5s."""
+    en, ex = engine(cfg, store)
+    assert await en.enter(pool)
+    store.db.execute('UPDATE positions SET sell_due_at=? WHERE key=?',
+                     (time.time() - 1, pool.key))
+    assert any(r['key'] == pool.key for r in store.due(time.time()))
+
+    async def boom(row):
+        raise RuntimeError('worker exploded')
+    en.exit = boom
+
+    task = asyncio.create_task(en._exit_loop())
+    await asyncio.sleep(1.2)
+    en.stop()
+    await task
+
+    row = store.get(pool.key)
+    assert row['next_sell_retry_at'] > time.time(), 'failed key must be deferred'
+    errors = [e for e in store.events() if e['kind'] == 'EXIT_WORKER_ERROR']
+    assert len(errors) <= 3, f'hot loop: {len(errors)} failures in ~1.2s'
