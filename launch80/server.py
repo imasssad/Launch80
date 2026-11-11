@@ -58,6 +58,17 @@ def create_app(store: Store, cfg: Settings) -> FastAPI:
         return FileResponse(page, media_type='text/html',
                             headers={'Cache-Control': 'no-store'})
 
+    @app.get('/favicon.svg')
+    def favicon():
+        # Public: it is a static image and carries no data. Browsers request
+        # it before any session exists, so gating it would only produce 401s
+        # in the console.
+        icon = Path(__file__).parent / 'web' / 'favicon.svg'
+        if not icon.is_file():
+            raise HTTPException(404, 'favicon not installed')
+        return FileResponse(icon, media_type='image/svg+xml',
+                            headers={'Cache-Control': 'public, max-age=86400'})
+
     # ---------------------------------------------------------------- auth
     @app.get('/api/auth/session')
     def auth_session(request: Request):

@@ -25,7 +25,7 @@ launch80 = "launch80.main:main"
 include = ["launch80*"]
 
 [tool.setuptools.package-data]
-launch80 = ["web/*.html"]
+launch80 = ["web/*.html", "web/*.svg"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

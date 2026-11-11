@@ -303,3 +303,17 @@ def test_dashboard_uses_the_shared_design_tokens(secured):
     body = client.get('/').text
     for token in ('--lime:#c1f77d', '--teal:#42e1c4', '--red:#fd807a', '--bg:#090f13'):
         assert token in body, f'missing shared design token {token}'
+
+
+def test_favicon_is_served_without_a_session(secured):
+    """Browsers fetch the icon before signing in; gating it only yields 401s."""
+    client, _, _ = secured
+    r = client.get('/favicon.svg')
+    assert r.status_code == 200
+    assert r.headers['content-type'].startswith('image/svg+xml')
+    assert r.text.lstrip().startswith('<svg')
+
+
+def test_page_links_the_favicon(secured):
+    client, _, _ = secured
+    assert 'rel="icon"' in client.get('/').text
